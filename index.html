@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Routy - AI 여행 플래너 MVP</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- Leaflet Map CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  
+  <!-- Leaflet Map JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- App Custom Styles -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Background decorative glows -->
+  <div class="bg-glow bg-glow-1"></div>
+  <div class="bg-glow bg-glow-2"></div>
+
+  <!-- Main Device Container (Mock Mobile phone frame on Desktop, full screen on Mobile) -->
+  <div id="device-wrapper">
+    <div id="phone-notch"></div>
+    <div id="phone-status-bar">
+      <span class="status-time">14:40</span>
+      <span class="status-icons">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 19.4c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0l1.9-1.9C9.07 19.57 10.48 20 12 20c4.97 0 9-4.03 9-9s-4.03-9-9-9zm0 15c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/></svg>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+      </span>
+    </div>
+
+    <!-- Desktop View Header (Hidden on Mobile) -->
+    <header id="desktop-header">
+      <div class="logo-wrapper" onclick="switchTab('explore')">
+        <span class="logo-icon">✈️</span>
+        <span class="logo-text">Routy</span>
+      </div>
+      <nav class="desktop-nav">
+        <button class="desktop-nav-item active" data-tab="explore">🗺️ 추천 탐색</button>
+        <button class="desktop-nav-item" data-tab="planner">⚡ AI 플래너</button>
+        <button class="desktop-nav-item" data-tab="trips">📅 내 일정</button>
+        <button class="desktop-nav-item" data-tab="profile">👤 프로필</button>
+      </nav>
+      <div class="desktop-header-actions">
+        <button id="btn-desktop-senior" class="btn-header-senior">👵👴 큰글씨</button>
+        <button class="header-btn" id="btn-desktop-theme" title="다크모드 토글">🌙</button>
+      </div>
+    </header>
+
+    <!-- Active Screen Viewport -->
+    <div id="app-viewport">
+      
+
+      
+      <!-- SCREEN: Explore / Home -->
+      <section id="screen-explore" class="app-screen active">
+        <header class="app-header">
+          <div class="logo-wrapper">
+            <span class="logo-icon">✈️</span>
+            <span class="logo-text">Routy</span>
+          </div>
+          <button id="btn-header-senior" class="btn-header-senior">👵👴 큰글씨</button>
+          <button class="header-btn" id="btn-quick-theme" title="다크모드 토글">🌙</button>
+        </header>
+        
+        <div class="screen-content scrollable">
+          <div class="search-section">
+            <h1>어디로 떠나시나요?</h1>
+            <div class="search-pill-box">
+              <span class="search-icon">🔍</span>
+              <input type="text" id="explore-search-input" placeholder="여행지나 키워드를 입력하세요" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="section-title">
+            <h2>인기 테마 추천</h2>
+          </div>
+          
+          <div class="template-list" id="templates-container">
+            <!-- Templates will be injected here dynamically -->
+          </div>
+        </div>
+      </section>
+
+      <!-- SCREEN: Planner Form & Loading -->
+      <section id="screen-planner" class="app-screen">
+        <header class="app-header">
+          <h2>AI 일정 생성기</h2>
+        </header>
+        
+        <div class="screen-content scrollable">
+          <form id="planner-form" onsubmit="event.preventDefault();">
+            <div class="form-group">
+              <label for="input-destination">여행 목적지</label>
+              <input type="text" id="input-destination" placeholder="예: 제주도, 도쿄, 경주, 파리 등" required autocomplete="off">
+              <div class="input-suggestions" id="destination-suggestions"></div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group col">
+                <label for="input-duration">여행 기간</label>
+                <select id="input-duration">
+                  <option value="1">1일 (당일치기)</option>
+                  <option value="2">2일 (1박 2일)</option>
+                  <option value="3" selected>3일 (2박 3일)</option>
+                  <option value="4">4일 (3박 4일)</option>
+                  <option value="5">5일 (4박 5일)</option>
+                  <option value="6">6일 (5박 6일)</option>
+                  <option value="7">7일 (6박 7일)</option>
+                </select>
+              </div>
+              <div class="form-group col">
+                <label for="input-budget">여행 예산</label>
+                <select id="input-budget">
+                  <option value="low">알뜰하게 (가성비)</option>
+                  <option value="medium" selected>적당하게 (평범하게)</option>
+                  <option value="high">고급스럽게 (럭셔리)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>선호하는 여행 스타일</label>
+              <div class="style-tags-container">
+                <span class="style-tag active" data-style="relaxing">🧘‍♀️ 힐링/휴양</span>
+                <span class="style-tag" data-style="active">🎒 액티비티/관광</span>
+                <span class="style-tag" data-style="foodie">🍕 맛집투어</span>
+                <span class="style-tag" data-style="shopping">🛍️ 쇼핑/감성카페</span>
+                <span class="style-tag" data-style="cultural">🏛️ 역사/문화</span>
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-block btn-primary" id="btn-generate-itinerary">
+              <span>AI 일정 생성하기</span>
+              <span class="btn-icon">⚡</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Inner Screen: AI Generating Loading Screen -->
+        <div id="planner-loading-overlay" class="loading-overlay">
+          <div class="spinner-container">
+            <div class="loading-spinner"></div>
+            <div class="pulse-circle"></div>
+          </div>
+          <h3 class="loading-title">Routy AI 일정 설계 중...</h3>
+          <p class="loading-message" id="loading-status-text">여행지 트렌드 분석 중...</p>
+        </div>
+      </section>
+
+      <!-- SCREEN: Itinerary Editor / Result -->
+      <section id="screen-itinerary" class="app-screen">
+        <header class="app-header has-back">
+          <button class="back-btn" id="btn-itinerary-back">←</button>
+          <h2 id="itinerary-title">도쿄 핵심 일정</h2>
+          <div class="header-actions-wrapper">
+            <button class="header-edit-btn" id="btn-toggle-edit-mode">편집</button>
+            <button class="header-action-btn" id="btn-save-itinerary">저장</button>
+          </div>
+        </header>
+
+        <!-- Split Map & Timeline Container -->
+        <div class="itinerary-split-container">
+          <!-- TOP: Leaflet Interactive Map -->
+          <div id="map-wrapper">
+            <div id="map"></div>
+            <div class="map-controls">
+              <span id="map-day-indicator">Day 1 동선</span>
+            </div>
+          </div>
+
+          <!-- BOTTOM: Day Picker and Place Timeline -->
+          <div class="itinerary-details-wrapper scrollable">
+            <!-- Total Budget Summary Bar -->
+            <div class="budget-summary-bar" id="itinerary-budget-summary">
+              <span class="budget-label">💰 총 예상 경비</span>
+              <span class="budget-amount" id="itinerary-total-budget">₩0</span>
+            </div>
+
+            <!-- Collaborators (Friends) Bar -->
+            <div class="collaborators-bar" id="itinerary-collaborators-bar">
+              <div class="collab-avatars-label">👥 공동 편집:</div>
+              <div class="avatar-stack" id="itinerary-collab-avatars">
+                <!-- Circular avatars injected here -->
+              </div>
+              <button class="btn-collab-invite" id="btn-collab-invite">+ 초대</button>
+            </div>
+
+            <!-- Map Toggle Button (Visible only in Senior Mode) -->
+            <button id="btn-toggle-map" class="senior-map-toggle-btn hidden-normal">🗺️ 지도 순서도 보기</button>
+
+            <!-- Day Tabs Slider -->
+            <div class="day-tabs-slider" id="day-tabs-container">
+              <!-- Dynamically injected Day 1, Day 2 tabs -->
+            </div>
+
+            <!-- Place Adder Form Toggle -->
+            <div class="add-place-trigger" id="btn-toggle-add-place">
+              <span>➕ 이 날에 장소 직접 추가하기</span>
+            </div>
+            
+            <!-- Quick Add Place Drawer (Hidden by default) -->
+            <div class="add-place-drawer" id="add-place-drawer">
+              <input type="text" id="add-place-name" placeholder="장소 이름을 입력하세요 (예: 에펠탑)">
+              <div class="drawer-row">
+                <input type="text" id="add-place-time" placeholder="시간 (예: 14:00 - 15:00)">
+                <select id="add-place-cat">
+                  <option value="sightseeing">관광</option>
+                  <option value="restaurant">식당</option>
+                  <option value="cafe">카페</option>
+                  <option value="hotel">숙소</option>
+                  <option value="transit">이동</option>
+                </select>
+              </div>
+              <div class="drawer-row">
+                <input type="number" id="add-place-price" placeholder="예상 금액 (₩) - 비워두면 자동 계산" min="0" step="1000">
+              </div>
+              <textarea id="add-place-desc" placeholder="장소 설명을 입력하세요 (메모)"></textarea>
+              <div class="drawer-actions">
+                <button class="btn btn-sm btn-secondary" id="btn-cancel-add-place">취소</button>
+                <button class="btn btn-sm btn-primary" id="btn-confirm-add-place">추가</button>
+              </div>
+            </div>
+
+            <!-- Timeline Timeline list -->
+            <div class="timeline-container" id="timeline-places-container">
+              <!-- Items injected here -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCREEN: Confirmation (Final Itinerary Confirmation) -->
+      <section id="screen-confirmation" class="app-screen">
+        <header class="app-header">
+          <h2>최종 일정 확정</h2>
+        </header>
+        <div class="screen-content scrollable">
+          <div class="confirmation-container">
+            <div class="confetti-container" id="confetti-container"></div>
+            
+            <div class="confirmation-success-badge">
+              <div class="success-check-circle">
+                <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              </div>
+            </div>
+
+            <h1 id="confirm-trip-title">교토-오사카 3일</h1>
+            <p class="confirm-status-msg">여행 일정이 확정되었습니다!</p>
+            <p class="confirm-sub-msg">즐거운 여행 되세요! ✈️</p>
+
+            <div class="action-cards-grid">
+              <div class="action-card" id="btn-action-pdf">
+                <div class="action-card-icon">📄</div>
+                <div class="action-card-label">PDF 다운로드</div>
+              </div>
+              <div class="action-card" id="btn-action-share">
+                <div class="action-card-icon">🔗</div>
+                <div class="action-card-label">공유하기</div>
+              </div>
+              <div class="action-card" id="btn-action-calendar">
+                <div class="action-card-icon">📅</div>
+                <div class="action-card-label">캘린더 연동</div>
+              </div>
+              <div class="action-card" id="btn-action-checklist">
+                <div class="action-card-icon">☑️</div>
+                <div class="action-card-label">체크리스트</div>
+              </div>
+              <div class="action-card" id="btn-action-offline">
+                <div class="action-card-icon">💾</div>
+                <div class="action-card-label">오프라인 보기</div>
+              </div>
+              <div class="action-card" id="btn-action-viewtrips">
+                <div class="action-card-icon">👁️</div>
+                <div class="action-card-label">내 일정 보기</div>
+              </div>
+            </div>
+
+            <button class="btn btn-block btn-primary confirmation-btn-ok" id="btn-confirmation-ok">확인</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCREEN: Saved Trips -->
+      <section id="screen-trips" class="app-screen">
+        <header class="app-header">
+          <h2>내 저장된 일정</h2>
+        </header>
+        <div class="screen-content scrollable">
+          <div id="saved-trips-list" class="saved-trips-list">
+            <!-- Saved trips list injected here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- SCREEN: Profile & User Auth -->
+      <section id="screen-profile" class="app-screen">
+        <header class="app-header">
+          <h2>내 정보</h2>
+        </header>
+        <div class="screen-content scrollable">
+          <div id="profile-unauthenticated" class="profile-card-unauth">
+            <div class="avatar-placeholder">👤</div>
+            <h3>로그인하고 일정을 저장해보세요</h3>
+            <p>SNS 간편 로그인을 통해 1초 만에 가입하고 모바일과 PC 어디서든 여행 일정을 불러올 수 있습니다.</p>
+            <div class="social-login-buttons">
+              <button class="btn-social btn-kakao" onclick="mockLogin('kakao')">
+                <span class="social-icon">💬</span> 카카오로 1초 로그인
+              </button>
+              <button class="btn-social btn-naver" onclick="mockLogin('naver')">
+                <span class="social-icon">💚</span> 네이버로 로그인
+              </button>
+              <button class="btn-social btn-google" onclick="mockLogin('google')">
+                <span class="social-icon">🔴</span> Google로 로그인
+              </button>
+            </div>
+
+            <div id="email-auth-trigger" style="text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); cursor: pointer; text-decoration: underline; font-weight: 500;">
+              📧 이메일로 시작하기
+            </div>
+
+            <div id="email-auth-container" class="hidden">
+              <div class="auth-divider">
+                <span>또는 이메일로 시작하기</span>
+              </div>
+
+              <div class="email-auth-box">
+                <div class="auth-toggle-tabs">
+                  <span class="auth-tab active" id="tab-auth-login">로그인</span>
+                  <span class="auth-tab" id="tab-auth-signup">회원가입</span>
+                </div>
+                <form id="email-auth-form" onsubmit="event.preventDefault();">
+                  <div class="form-group" id="group-auth-name" style="display: none;">
+                    <label for="auth-input-name">이름</label>
+                    <input type="text" id="auth-input-name" placeholder="이름을 입력하세요 (예: 길동이)">
+                  </div>
+                  <div class="form-group">
+                    <label for="auth-input-email">이메일 주소</label>
+                    <input type="email" id="auth-input-email" placeholder="example@email.com" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="auth-input-password">비밀번호</label>
+                    <input type="password" id="auth-input-password" placeholder="비밀번호 입력" required>
+                  </div>
+                  <button type="submit" class="btn btn-block btn-primary" id="btn-email-auth-submit">로그인</button>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          <div id="profile-authenticated" class="profile-card-auth hidden">
+            <div class="profile-header">
+              <div class="profile-avatar" id="user-avatar">✈️</div>
+              <div class="profile-info">
+                <h3 id="user-name">길동이</h3>
+                <p id="user-email">kakao_user@routy.com</p>
+              </div>
+            </div>
+            
+            <div class="profile-stats">
+              <div class="stat-item">
+                <span class="stat-val" id="stat-count-trips">0</span>
+                <span class="stat-label">저장한 일정</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-val" id="stat-count-clicks">0</span>
+                <span class="stat-label">예약 시도</span>
+              </div>
+            </div>
+            <!-- My Friends Section -->
+            <div class="profile-friends-section">
+              <div class="friends-header">
+                <h4>👥 내 친구 관리</h4>
+                <span class="friends-count" id="friends-count-badge">0명</span>
+              </div>
+              
+              <!-- Friends Search/Add Form -->
+              <div class="friends-add-form">
+                <input type="email" id="friend-add-email" placeholder="친구 이메일 입력 (예: minsu@routy.com)">
+                <button class="btn btn-sm btn-primary" id="btn-add-friend-action">추가</button>
+              </div>
+
+              <div class="friends-list-container scrollable" id="profile-friends-list" style="max-height: 200px; overflow-y: auto;">
+                <!-- Friends item list -->
+              </div>
+            </div>
+
+            <button class="btn btn-block btn-secondary" onclick="mockLogout()">로그아웃</button>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- BOTTOM NAVIGATION BAR -->
+      <nav id="bottom-nav">
+        <button class="nav-item active" data-tab="explore">
+          <span class="nav-icon">🗺️</span>
+          <span class="nav-label">탐색</span>
+        </button>
+        <button class="nav-item" data-tab="planner">
+          <span class="nav-icon">⚡</span>
+          <span class="nav-label">AI 플래너</span>
+        </button>
+        <button class="nav-item" data-tab="trips">
+          <span class="nav-icon">📅</span>
+          <span class="nav-label">내 일정</span>
+        </button>
+        <button class="nav-item" data-tab="profile">
+          <span class="nav-icon">👤</span>
+          <span class="nav-label">프로필</span>
+        </button>
+
+      </nav>
+
+    </div>
+  </div>
+
+  <!-- Notification Banner -->
+  <div id="toast-notification" class="toast-banner">알림 메시지</div>
+
+  <!-- Senior Detail View Modal -->
+  <div id="senior-detail-modal-overlay" class="modal-overlay">
+    <div class="senior-detail-modal">
+      <div class="senior-modal-header">
+        <span class="senior-modal-time" id="senior-modal-time">🕒 09:00</span>
+        <span class="senior-modal-cat" id="senior-modal-cat">관광</span>
+        <span class="senior-modal-price-badge" id="senior-modal-price">₩0</span>
+      </div>
+      <h2 class="senior-modal-title" id="senior-modal-title">장소명</h2>
+      
+      <div class="senior-modal-body">
+        <div id="senior-modal-description" class="senior-modal-desc"></div>
+        <div id="senior-modal-transit-box"></div>
+      </div>
+      
+      <div class="senior-modal-controls" id="senior-modal-controls">
+        <!-- Buttons will be dynamically injected here -->
+      </div>
+      
+      <button class="btn-senior-modal-close" id="btn-senior-modal-close">❌ 창 닫기</button>
+    </div>
+  </div>
+
+  <!-- Booking Click Confirmation Modal -->
+  <div id="booking-modal-overlay" class="modal-overlay">
+    <div class="booking-confirm-modal">
+      <div class="modal-emoji">🛍️</div>
+      <h3>OTA 파트너사로 연결하시겠습니까?</h3>
+      <p>선택하신 장소 <strong id="modal-place-name">장소명</strong>의 예약 정보(Agoda/Klook)로 이동합니다.</p>
+      <div class="modal-warning-box">
+        💡 제휴 예약 사이트(Agoda 등)로 안전하고 편리하게 연결됩니다.
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="btn-booking-cancel">돌아가기</button>
+        <button class="btn btn-primary" id="btn-booking-confirm">예약 사이트로 이동</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Collaborator Invite & Activity Modal -->
+  <div id="collab-invite-modal-overlay" class="modal-overlay">
+    <div class="collab-modal">
+      <div class="collab-modal-header">
+        <h3>👥 일정 공동 편집 & 친구 초대</h3>
+        <button class="btn-close-modal" id="btn-close-collab-modal">✕</button>
+      </div>
+      <div class="collab-modal-body">
+        <div class="collab-section">
+          <h4>참여 중인 인원</h4>
+          <div class="collab-member-list" id="collab-members-list">
+            <!-- Members list with remove buttons -->
+          </div>
+        </div>
+        
+        <div class="collab-section">
+          <h4>새로운 친구 초대</h4>
+          <div class="collab-invite-form">
+            <select id="collab-invite-select">
+              <option value="">초대할 친구 선택...</option>
+            </select>
+            <button class="btn btn-sm btn-primary" id="btn-send-collab-invite">초대하기</button>
+          </div>
+        </div>
+
+        <div class="collab-section">
+          <h4>실시간 공동 편집 로그</h4>
+          <div class="collab-log-box" id="collab-log-box">
+            <!-- Simulated logs -->
+          </div>
+          <button class="btn btn-sm btn-secondary btn-block" id="btn-trigger-simulation" style="margin-top: 10px; border: 1px dashed var(--primary-color);">
+            ⚡ 친구 가상 작업 시뮬레이션 작동
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Place Comments Drawer -->
+  <div id="place-comments-drawer-overlay" class="modal-overlay">
+    <div class="comments-drawer">
+      <div class="comments-drawer-header">
+        <h3 id="comments-drawer-title">📍 장소 한줄평</h3>
+        <button class="btn-close-modal" id="btn-close-comments-drawer">✕</button>
+      </div>
+      <div class="comments-drawer-body">
+        <div class="comments-list" id="comments-list-container">
+          <!-- Comments chat bubbles -->
+        </div>
+      </div>
+      <div class="comments-drawer-footer">
+        <form id="comment-submit-form" onsubmit="event.preventDefault();">
+          <input type="text" id="comment-input" placeholder="메모나 의견을 남겨보세요..." autocomplete="off">
+          <button type="submit" class="btn-send-comment">⚡</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Checklist Modal -->
+  <div id="checklist-modal-overlay" class="modal-overlay">
+    <div class="checklist-modal">
+      <div class="checklist-modal-header">
+        <h3>🎒 여행 준비물 체크리스트</h3>
+        <button class="btn-close-modal" id="btn-close-checklist-modal">✕</button>
+      </div>
+      <div class="checklist-modal-body">
+        <p class="checklist-desc" id="checklist-dest-info">교토-오사카 여행을 위한 추천 준비물입니다.</p>
+        <div class="checklist-items" id="checklist-items-container">
+          <!-- Checklist items -->
+        </div>
+        <div class="checklist-add-custom">
+          <input type="text" id="checklist-custom-input" placeholder="나만의 준비물 추가...">
+          <button class="btn btn-sm btn-primary" id="btn-add-custom-checklist">추가</button>
+        </div>
+      </div>
+      <div class="checklist-modal-footer">
+        <button class="btn btn-block btn-secondary" id="btn-reset-checklist">초기화</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF Print Preview Modal -->
+  <div id="pdf-modal-overlay" class="modal-overlay">
+    <div class="pdf-preview-modal">
+      <div class="pdf-modal-header">
+        <h3>📄 여행 일정 PDF 미리보기</h3>
+        <button class="btn-close-modal" id="btn-close-pdf-modal">✕</button>
+      </div>
+      <div class="pdf-modal-body" id="pdf-preview-content">
+        <!-- Rendered text summary suited for printing -->
+      </div>
+      <div class="pdf-modal-footer">
+        <button class="btn btn-secondary" id="btn-print-pdf">인쇄하기 / PDF 저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load script files -->
+  <script src="templates.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
