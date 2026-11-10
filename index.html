@@ -3,7 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Routy - AI 여행 플래너 MVP</title>
+  <title>Routy - AI 여행 플래너</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#6366f1">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Routy">
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -45,7 +51,7 @@
         <button class="desktop-nav-item active" data-tab="explore">🗺️ 추천 탐색</button>
         <button class="desktop-nav-item" data-tab="planner">⚡ AI 플래너</button>
         <button class="desktop-nav-item" data-tab="trips">📅 내 일정</button>
-        <button class="desktop-nav-item" data-tab="profile">👤 프로필</button>
+        <button class="desktop-nav-item" data-tab="profile">⚙️ 설정</button>
       </nav>
       <div class="desktop-header-actions">
         <button id="btn-desktop-senior" class="btn-header-senior">👵👴 큰글씨</button>
@@ -96,6 +102,12 @@
         
         <div class="screen-content scrollable">
           <form id="planner-form" onsubmit="event.preventDefault();">
+            <div class="ai-key-notice" id="ai-key-notice">
+              <strong>🔑 Gemini API 키가 아직 없어요</strong>
+              <span>설정에서 키를 등록하면 실제 AI가 일정을 짜 줍니다. 지금은 샘플 일정만 만들 수 있어요.</span>
+              <button type="button" class="btn btn-sm btn-primary" onclick="switchTab('profile')">설정으로 이동</button>
+            </div>
+
             <div class="form-group">
               <label for="input-destination">여행 목적지</label>
               <input type="text" id="input-destination" placeholder="예: 제주도, 도쿄, 경주, 파리 등" required autocomplete="off">
@@ -103,6 +115,10 @@
             </div>
 
             <div class="form-row">
+              <div class="form-group col">
+                <label for="input-start-date">출발일 (선택)</label>
+                <input type="date" id="input-start-date">
+              </div>
               <div class="form-group col">
                 <label for="input-duration">여행 기간</label>
                 <select id="input-duration">
@@ -113,20 +129,36 @@
                   <option value="5">5일 (4박 5일)</option>
                   <option value="6">6일 (5박 6일)</option>
                   <option value="7">7일 (6박 7일)</option>
+                  <option value="8">8일 (7박 8일)</option>
+                  <option value="9">9일 (8박 9일)</option>
+                  <option value="10">10일 (9박 10일)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group col">
+                <label for="input-party">누구와</label>
+                <select id="input-party">
+                  <option value="혼자">혼자</option>
+                  <option value="연인/배우자와 둘이서" selected>연인/배우자</option>
+                  <option value="친구들과">친구들</option>
+                  <option value="어린 자녀가 있는 가족">아이 동반 가족</option>
+                  <option value="부모님(어르신) 모시고, 걷는 양을 줄여서">부모님과</option>
                 </select>
               </div>
               <div class="form-group col">
                 <label for="input-budget">여행 예산</label>
                 <select id="input-budget">
                   <option value="low">알뜰하게 (가성비)</option>
-                  <option value="medium" selected>적당하게 (평범하게)</option>
-                  <option value="high">고급스럽게 (럭셔리)</option>
+                  <option value="medium" selected>적당하게</option>
+                  <option value="high">고급스럽게</option>
                 </select>
               </div>
             </div>
 
             <div class="form-group">
-              <label>선호하는 여행 스타일</label>
+              <label>선호하는 여행 스타일 <small class="label-hint">(여러 개 선택 가능)</small></label>
               <div class="style-tags-container">
                 <span class="style-tag active" data-style="relaxing">🧘‍♀️ 힐링/휴양</span>
                 <span class="style-tag" data-style="active">🎒 액티비티/관광</span>
@@ -136,8 +168,13 @@
               </div>
             </div>
 
+            <div class="form-group">
+              <label for="input-request">추가 요청사항 (선택)</label>
+              <textarea id="input-request" rows="3" placeholder="예: 둘째 날은 비 올 때 갈 실내 위주로, 숙소는 하카타역 근처, 라멘 맛집 꼭 넣어줘"></textarea>
+            </div>
+
             <button type="submit" class="btn btn-block btn-primary" id="btn-generate-itinerary">
-              <span>AI 일정 생성하기</span>
+              <span id="btn-generate-label">AI 일정 생성하기</span>
               <span class="btn-icon">⚡</span>
             </button>
           </form>
@@ -150,7 +187,9 @@
             <div class="pulse-circle"></div>
           </div>
           <h3 class="loading-title">Routy AI 일정 설계 중...</h3>
-          <p class="loading-message" id="loading-status-text">여행지 트렌드 분석 중...</p>
+          <p class="loading-message" id="loading-status-text">여행지 정보를 모으는 중...</p>
+          <p class="loading-elapsed" id="loading-elapsed"></p>
+          <button type="button" class="btn btn-sm btn-secondary" id="btn-cancel-generate">취소</button>
         </div>
       </section>
 
@@ -179,18 +218,24 @@
           <div class="itinerary-details-wrapper scrollable">
             <!-- Total Budget Summary Bar -->
             <div class="budget-summary-bar" id="itinerary-budget-summary">
-              <span class="budget-label">💰 총 예상 경비</span>
+              <span class="budget-label">💰 1인 예상 경비</span>
               <span class="budget-amount" id="itinerary-total-budget">₩0</span>
             </div>
 
-            <!-- Collaborators (Friends) Bar -->
-            <div class="collaborators-bar" id="itinerary-collaborators-bar">
-              <div class="collab-avatars-label">👥 공동 편집:</div>
-              <div class="avatar-stack" id="itinerary-collab-avatars">
-                <!-- Circular avatars injected here -->
-              </div>
-              <button class="btn-collab-invite" id="btn-collab-invite">+ 초대</button>
+            <!-- Trip meta & quick tools -->
+            <div class="trip-meta-row" id="trip-meta-row"></div>
+            <div class="trip-tools-row">
+              <button class="trip-tool-btn" id="btn-tool-share">🔗 공유</button>
+              <button class="trip-tool-btn" id="btn-tool-calendar">📅 캘린더</button>
+              <button class="trip-tool-btn" id="btn-tool-checklist">☑️ 준비물</button>
+              <button class="trip-tool-btn" id="btn-tool-print">📄 인쇄</button>
             </div>
+
+            <!-- AI refine -->
+            <form class="ai-refine-box" id="ai-refine-form" onsubmit="event.preventDefault();">
+              <input type="text" id="ai-refine-input" placeholder="✨ AI에게 수정 요청 (예: 2일차 오후를 실내 위주로)" autocomplete="off">
+              <button type="submit" class="btn btn-sm btn-primary" id="btn-ai-refine">수정</button>
+            </form>
 
             <!-- Map Toggle Button (Visible only in Senior Mode) -->
             <button id="btn-toggle-map" class="senior-map-toggle-btn hidden-normal">🗺️ 지도 순서도 보기</button>
@@ -207,7 +252,12 @@
             
             <!-- Quick Add Place Drawer (Hidden by default) -->
             <div class="add-place-drawer" id="add-place-drawer">
-              <input type="text" id="add-place-name" placeholder="장소 이름을 입력하세요 (예: 에펠탑)">
+              <div class="place-search-row">
+                <input type="text" id="add-place-name" placeholder="장소 이름 (예: 에펠탑)" autocomplete="off">
+                <button type="button" class="btn btn-sm btn-secondary" id="btn-add-place-search">🔍 위치 찾기</button>
+              </div>
+              <div class="place-search-results" id="add-place-results"></div>
+              <div class="place-search-picked" id="add-place-picked"></div>
               <div class="drawer-row">
                 <input type="text" id="add-place-time" placeholder="시간 (예: 14:00 - 15:00)">
                 <select id="add-place-cat">
@@ -215,11 +265,12 @@
                   <option value="restaurant">식당</option>
                   <option value="cafe">카페</option>
                   <option value="hotel">숙소</option>
+                  <option value="shopping">쇼핑</option>
                   <option value="transit">이동</option>
                 </select>
               </div>
               <div class="drawer-row">
-                <input type="number" id="add-place-price" placeholder="예상 금액 (₩) - 비워두면 자동 계산" min="0" step="1000">
+                <input type="number" id="add-place-price" placeholder="1인 예상 금액 (₩) - 비우면 자동 추정" min="0" step="1000">
               </div>
               <textarea id="add-place-desc" placeholder="장소 설명을 입력하세요 (메모)"></textarea>
               <div class="drawer-actions">
@@ -299,99 +350,59 @@
         </div>
       </section>
 
-      <!-- SCREEN: Profile & User Auth -->
+      <!-- SCREEN: Settings -->
       <section id="screen-profile" class="app-screen">
         <header class="app-header">
-          <h2>내 정보</h2>
+          <h2>설정</h2>
         </header>
         <div class="screen-content scrollable">
-          <div id="profile-unauthenticated" class="profile-card-unauth">
-            <div class="avatar-placeholder">👤</div>
-            <h3>로그인하고 일정을 저장해보세요</h3>
-            <p>SNS 간편 로그인을 통해 1초 만에 가입하고 모바일과 PC 어디서든 여행 일정을 불러올 수 있습니다.</p>
-            <div class="social-login-buttons">
-              <button class="btn-social btn-kakao" onclick="mockLogin('kakao')">
-                <span class="social-icon">💬</span> 카카오로 1초 로그인
-              </button>
-              <button class="btn-social btn-naver" onclick="mockLogin('naver')">
-                <span class="social-icon">💚</span> 네이버로 로그인
-              </button>
-              <button class="btn-social btn-google" onclick="mockLogin('google')">
-                <span class="social-icon">🔴</span> Google로 로그인
-              </button>
-            </div>
-
-            <div id="email-auth-trigger" style="text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); cursor: pointer; text-decoration: underline; font-weight: 500;">
-              📧 이메일로 시작하기
-            </div>
-
-            <div id="email-auth-container" class="hidden">
-              <div class="auth-divider">
-                <span>또는 이메일로 시작하기</span>
+          <div class="settings-card">
+            <h3>🤖 AI 연결 (Google Gemini)</h3>
+            <p class="settings-desc">
+              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>에서 무료 API 키를 발급받아 붙여넣으세요.
+              키는 이 기기 브라우저에만 저장되고, Google API로만 전송됩니다.
+            </p>
+            <div class="form-group">
+              <label for="setting-api-key">API 키</label>
+              <div class="key-input-row">
+                <input type="password" id="setting-api-key" placeholder="AIza..." autocomplete="off" spellcheck="false">
+                <button type="button" class="btn btn-sm btn-secondary" id="btn-toggle-key-visibility">보기</button>
               </div>
+            </div>
+            <div class="form-group">
+              <label for="setting-model">모델</label>
+              <input type="text" id="setting-model" list="model-options" autocomplete="off" spellcheck="false">
+              <datalist id="model-options">
+                <option value="gemini-3.8-flash">
+                <option value="gemini-3.5-flash-lite">
+                <option value="gemini-4-argon">
+              </datalist>
+              <small class="settings-hint">기본값 gemini-3.8-flash. 빠르고 저렴하게 쓰려면 gemini-3.5-flash-lite.</small>
+            </div>
+            <div class="settings-actions">
+              <button class="btn btn-sm btn-primary" id="btn-save-settings">저장</button>
+              <button class="btn btn-sm btn-secondary" id="btn-test-settings">연결 테스트</button>
+            </div>
+            <div class="settings-status" id="settings-status"></div>
+          </div>
 
-              <div class="email-auth-box">
-                <div class="auth-toggle-tabs">
-                  <span class="auth-tab active" id="tab-auth-login">로그인</span>
-                  <span class="auth-tab" id="tab-auth-signup">회원가입</span>
-                </div>
-                <form id="email-auth-form" onsubmit="event.preventDefault();">
-                  <div class="form-group" id="group-auth-name" style="display: none;">
-                    <label for="auth-input-name">이름</label>
-                    <input type="text" id="auth-input-name" placeholder="이름을 입력하세요 (예: 길동이)">
-                  </div>
-                  <div class="form-group">
-                    <label for="auth-input-email">이메일 주소</label>
-                    <input type="email" id="auth-input-email" placeholder="example@email.com" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="auth-input-password">비밀번호</label>
-                    <input type="password" id="auth-input-password" placeholder="비밀번호 입력" required>
-                  </div>
-                  <button type="submit" class="btn btn-block btn-primary" id="btn-email-auth-submit">로그인</button>
-                </form>
-              </div>
+          <div class="settings-card">
+            <h3>💾 내 데이터</h3>
+            <p class="settings-desc">일정은 이 브라우저에 저장됩니다. 기기를 바꾸거나 브라우저 데이터를 지우기 전에 백업해 두세요.</p>
+            <div class="settings-stats" id="settings-stats"></div>
+            <div class="settings-actions">
+              <button class="btn btn-sm btn-secondary" id="btn-export-data">⬇️ 백업 파일 받기</button>
+              <button class="btn btn-sm btn-secondary" id="btn-import-data">⬆️ 백업 불러오기</button>
+              <input type="file" id="input-import-file" accept="application/json,.json" hidden>
+            </div>
+            <div class="settings-actions">
+              <button class="btn btn-sm btn-danger" id="btn-clear-data">모든 일정 삭제</button>
             </div>
           </div>
 
-          <div id="profile-authenticated" class="profile-card-auth hidden">
-            <div class="profile-header">
-              <div class="profile-avatar" id="user-avatar">✈️</div>
-              <div class="profile-info">
-                <h3 id="user-name">길동이</h3>
-                <p id="user-email">kakao_user@routy.com</p>
-              </div>
-            </div>
-            
-            <div class="profile-stats">
-              <div class="stat-item">
-                <span class="stat-val" id="stat-count-trips">0</span>
-                <span class="stat-label">저장한 일정</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-val" id="stat-count-clicks">0</span>
-                <span class="stat-label">예약 시도</span>
-              </div>
-            </div>
-            <!-- My Friends Section -->
-            <div class="profile-friends-section">
-              <div class="friends-header">
-                <h4>👥 내 친구 관리</h4>
-                <span class="friends-count" id="friends-count-badge">0명</span>
-              </div>
-              
-              <!-- Friends Search/Add Form -->
-              <div class="friends-add-form">
-                <input type="email" id="friend-add-email" placeholder="친구 이메일 입력 (예: minsu@routy.com)">
-                <button class="btn btn-sm btn-primary" id="btn-add-friend-action">추가</button>
-              </div>
-
-              <div class="friends-list-container scrollable" id="profile-friends-list" style="max-height: 200px; overflow-y: auto;">
-                <!-- Friends item list -->
-              </div>
-            </div>
-
-            <button class="btn btn-block btn-secondary" onclick="mockLogout()">로그아웃</button>
+          <div class="settings-card">
+            <h3>📱 앱처럼 쓰기</h3>
+            <p class="settings-desc">휴대폰 브라우저 메뉴에서 <strong>홈 화면에 추가</strong>를 누르면 앱처럼 실행되고, 한 번 연 일정은 오프라인에서도 볼 수 있어요. (https 주소에서 열었을 때)</p>
           </div>
         </div>
       </section>
@@ -412,8 +423,8 @@
           <span class="nav-label">내 일정</span>
         </button>
         <button class="nav-item" data-tab="profile">
-          <span class="nav-icon">👤</span>
-          <span class="nav-label">프로필</span>
+          <span class="nav-icon">⚙️</span>
+          <span class="nav-label">설정</span>
         </button>
 
       </nav>
@@ -447,77 +458,58 @@
     </div>
   </div>
 
-  <!-- Booking Click Confirmation Modal -->
-  <div id="booking-modal-overlay" class="modal-overlay">
-    <div class="booking-confirm-modal">
-      <div class="modal-emoji">🛍️</div>
-      <h3>OTA 파트너사로 연결하시겠습니까?</h3>
-      <p>선택하신 장소 <strong id="modal-place-name">장소명</strong>의 예약 정보(Agoda/Klook)로 이동합니다.</p>
-      <div class="modal-warning-box">
-        💡 제휴 예약 사이트(Agoda 등)로 안전하고 편리하게 연결됩니다.
+  <!-- Place Edit Modal -->
+  <div id="place-edit-modal-overlay" class="modal-overlay">
+    <div class="place-edit-modal">
+      <div class="checklist-modal-header">
+        <h3>✏️ 장소 편집</h3>
+        <button class="btn-close-modal" id="btn-close-place-edit">✕</button>
       </div>
-      <div class="modal-actions">
-        <button class="btn btn-secondary" id="btn-booking-cancel">돌아가기</button>
-        <button class="btn btn-primary" id="btn-booking-confirm">예약 사이트로 이동</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Collaborator Invite & Activity Modal -->
-  <div id="collab-invite-modal-overlay" class="modal-overlay">
-    <div class="collab-modal">
-      <div class="collab-modal-header">
-        <h3>👥 일정 공동 편집 & 친구 초대</h3>
-        <button class="btn-close-modal" id="btn-close-collab-modal">✕</button>
-      </div>
-      <div class="collab-modal-body">
-        <div class="collab-section">
-          <h4>참여 중인 인원</h4>
-          <div class="collab-member-list" id="collab-members-list">
-            <!-- Members list with remove buttons -->
+      <div class="place-edit-body">
+        <div class="form-group">
+          <label for="edit-place-name">장소 이름</label>
+          <div class="place-search-row">
+            <input type="text" id="edit-place-name" autocomplete="off">
+            <button type="button" class="btn btn-sm btn-secondary" id="btn-edit-place-search">🔍 위치</button>
+          </div>
+          <div class="place-search-results" id="edit-place-results"></div>
+          <div class="place-search-picked" id="edit-place-picked"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group col">
+            <label for="edit-place-time">시간</label>
+            <input type="text" id="edit-place-time" placeholder="09:00 - 10:30">
+          </div>
+          <div class="form-group col">
+            <label for="edit-place-day">날짜</label>
+            <select id="edit-place-day"></select>
           </div>
         </div>
-        
-        <div class="collab-section">
-          <h4>새로운 친구 초대</h4>
-          <div class="collab-invite-form">
-            <select id="collab-invite-select">
-              <option value="">초대할 친구 선택...</option>
+        <div class="form-row">
+          <div class="form-group col">
+            <label for="edit-place-cat">분류</label>
+            <select id="edit-place-cat">
+              <option value="sightseeing">관광</option>
+              <option value="restaurant">식당</option>
+              <option value="cafe">카페</option>
+              <option value="shopping">쇼핑</option>
+              <option value="hotel">숙소</option>
+              <option value="transit">이동</option>
             </select>
-            <button class="btn btn-sm btn-primary" id="btn-send-collab-invite">초대하기</button>
+          </div>
+          <div class="form-group col">
+            <label for="edit-place-price">1인 비용 (₩)</label>
+            <input type="number" id="edit-place-price" min="0" step="1000">
           </div>
         </div>
-
-        <div class="collab-section">
-          <h4>실시간 공동 편집 로그</h4>
-          <div class="collab-log-box" id="collab-log-box">
-            <!-- Simulated logs -->
-          </div>
-          <button class="btn btn-sm btn-secondary btn-block" id="btn-trigger-simulation" style="margin-top: 10px; border: 1px dashed var(--primary-color);">
-            ⚡ 친구 가상 작업 시뮬레이션 작동
-          </button>
+        <div class="form-group">
+          <label for="edit-place-desc">메모</label>
+          <textarea id="edit-place-desc" rows="3"></textarea>
         </div>
       </div>
-    </div>
-  </div>
-
-  <!-- Place Comments Drawer -->
-  <div id="place-comments-drawer-overlay" class="modal-overlay">
-    <div class="comments-drawer">
-      <div class="comments-drawer-header">
-        <h3 id="comments-drawer-title">📍 장소 한줄평</h3>
-        <button class="btn-close-modal" id="btn-close-comments-drawer">✕</button>
-      </div>
-      <div class="comments-drawer-body">
-        <div class="comments-list" id="comments-list-container">
-          <!-- Comments chat bubbles -->
-        </div>
-      </div>
-      <div class="comments-drawer-footer">
-        <form id="comment-submit-form" onsubmit="event.preventDefault();">
-          <input type="text" id="comment-input" placeholder="메모나 의견을 남겨보세요..." autocomplete="off">
-          <button type="submit" class="btn-send-comment">⚡</button>
-        </form>
+      <div class="drawer-actions" style="padding: 0 20px 20px;">
+        <button class="btn btn-sm btn-secondary" id="btn-cancel-place-edit">취소</button>
+        <button class="btn btn-sm btn-primary" id="btn-confirm-place-edit">저장</button>
       </div>
     </div>
   </div>
@@ -549,7 +541,7 @@
   <div id="pdf-modal-overlay" class="modal-overlay">
     <div class="pdf-preview-modal">
       <div class="pdf-modal-header">
-        <h3>📄 여행 일정 PDF 미리보기</h3>
+        <h3>📄 일정 인쇄 / PDF 저장</h3>
         <button class="btn-close-modal" id="btn-close-pdf-modal">✕</button>
       </div>
       <div class="pdf-modal-body" id="pdf-preview-content">
@@ -563,6 +555,7 @@
 
   <!-- Load script files -->
   <script src="templates.js"></script>
+  <script src="ai.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

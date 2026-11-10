@@ -1,33 +1,14 @@
-// Routy Travel App MVP - Core Controller & SPA Engine
+// Routy - 개인용 AI 여행 플래너 (Core Controller & SPA Engine)
 
 // --- Global Application State ---
 const state = {
   activeTab: 'explore',
   seniorMode: false,
   fontSizeStep: 0, // 0: Normal, 1: Large, 2: Extra Large, 3: Double Extra Large, 4: Triple Extra Large
-  user: {
-    loggedIn: false,
-    name: '',
-    email: '',
-    avatar: '👤'
-  },
-  mockUsers: [], // Mock database for email-based auth
   savedTrips: [],
-  activeTrip: null, // Current viewed/edited itinerary { title, destination, days, budget, style, places: [] }
-  activeTripDay: 1, // Filter day for itinerary timeline & map
-  editMode: false, // Edit mode toggle state
-  kpi: {
-    generations: 0,
-    saves: 0,
-    clicks: 0,
-    clickLogs: []
-  },
-  friends: [
-    { name: '김민수', email: 'minsu@routy.com', online: true },
-    { name: '이지원', email: 'jiwon@routy.com', online: true },
-    { name: '박태양', email: 'taeyang@routy.com', online: false },
-    { name: '최수아', email: 'sua@routy.com', online: true }
-  ]
+  activeTrip: null, // 현재 보고 있는 일정 { id, title, destination, days, startDate, budget, places: [] }
+  activeTripDay: 1,
+  editMode: false
 };
 
 // Map instance storage
@@ -169,29 +150,32 @@ document.addEventListener("DOMContentLoaded", () => {
   // Setup itinerary controls (save, back, place drawers)
   setupItineraryControls();
 
-  // Setup booking confirmation modal
-  setupBookingModal();
-
   // Setup senior detail view modal
   setupSeniorDetailModal();
 
   // Setup final confirmation screen actions
   setupConfirmationScreen();
 
-  // Setup collaborator & comment UI
-  setupCollaborationUI();
-
-  // Setup profile email authentication
-  setupProfileAuth();
+  // Settings, place editing, delegated place buttons
+  setupSettings();
+  setupPlaceEditModal();
+  setupPlaceActionDelegation();
+  setupTitleRename();
+  updateAiNotice();
 
   // Render initial explorer state
   renderExploreTab();
 
   // Setup drag-to-scroll functionality for Day tabs
   setupDayTabsDragScroll();
-  
-  // Track default metric on first load
-  updateKpiStats();
+
+  // 공유 링크(#trip=...)로 열었으면 해당 일정 표시
+  handleSharedLink();
+
+  // PWA: 오프라인 캐시
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    navigator.serviceWorker.register("sw.js").catch(err => console.warn("SW 등록 실패", err));
+  }
 
   // Window resize handler to invalidate map sizes during responsive transition
   let resizeTimeout;
@@ -263,8 +247,8 @@ function switchTab(tabName) {
   // Render specific tab contents on transition
   if (tabName === 'trips') {
     renderSavedTrips();
-  } else if (tabName === 'kpi') {
-    renderKpiDashboard();
+  } else if (tabName === 'planner') {
+    updateAiNotice();
   } else if (tabName === 'explore') {
     const searchInput = document.getElementById("explore-search-input");
     if (searchInput) {
@@ -273,7 +257,7 @@ function switchTab(tabName) {
     renderExploreTab();
     renderTemplates();
   } else if (tabName === 'profile') {
-    renderProfileTab();
+    renderSettingsTab();
   }
 }
 
@@ -314,13 +298,15 @@ function setupThemeToggle() {
 }
 
 // --- Toast Notifications ---
-function showToast(message) {
+let toastTimer = null;
+function showToast(message, duration = 2500) {
   const toast = document.getElementById("toast-notification");
   toast.textContent = message;
   toast.classList.add("active");
-  setTimeout(() => {
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
     toast.classList.remove("active");
-  }, 2500);
+  }, duration);
 }
 
 // --- Local Storage Management ---
@@ -330,61 +316,22 @@ function loadLocalStorage() {
     if (savedTrips) {
       state.savedTrips = JSON.parse(savedTrips);
       state.savedTrips.forEach(trip => {
+        ensureTripShape(trip);
         ensurePlacePrices(trip);
-        ensureTripCollaboratorsAndComments(trip);
       });
-    }
-    
-    const savedUser = localStorage.getItem("routy_user");
-    if (savedUser) {
-      state.user = JSON.parse(savedUser);
-    }
-
-    const savedKpi = localStorage.getItem("routy_kpi");
-    if (savedKpi) {
-      state.kpi = JSON.parse(savedKpi);
-    }
-
-    const savedSenior = localStorage.getItem("routy_senior_mode");
-    if (savedSenior !== null) {
-      state.seniorMode = JSON.parse(savedSenior);
     }
 
     const savedStep = localStorage.getItem("routy_font_size_step");
     if (savedStep !== null) {
-      state.fontSizeStep = parseInt(savedStep);
-      state.seniorMode = state.fontSizeStep > 0;
+      state.fontSizeStep = parseInt(savedStep, 10) || 0;
     }
+    state.seniorMode = state.fontSizeStep > 0;
 
-    const savedFriends = localStorage.getItem("routy_friends");
-    if (savedFriends) {
-      state.friends = JSON.parse(savedFriends);
-    } else {
-      state.friends = [
-        { name: '김민수', email: 'minsu@routy.com', online: true },
-        { name: '이지원', email: 'jiwon@routy.com', online: true },
-        { name: '박태양', email: 'taeyang@routy.com', online: false },
-        { name: '최수아', email: 'sua@routy.com', online: true }
-      ];
-      localStorage.setItem("routy_friends", JSON.stringify(state.friends));
-    }
+    // 예전 버전의 가짜 기능 데이터 정리
+    ["routy_user", "routy_kpi", "routy_friends", "routy_mock_users", "routy_senior_mode"].forEach(k => localStorage.removeItem(k));
 
-    // Load mock users
-    const savedMockUsers = localStorage.getItem("routy_mock_users");
-    if (savedMockUsers) {
-      state.mockUsers = JSON.parse(savedMockUsers);
-    } else {
-      // Seed default user
-      state.mockUsers = [
-        { name: "홍길동", email: "gildong@routy.com", password: "1234" }
-      ];
-      localStorage.setItem("routy_mock_users", JSON.stringify(state.mockUsers));
-    }
-
-    // Load theme
     const savedTheme = localStorage.getItem("routy_theme") || "light";
     document.documentElement.setAttribute("data-theme", savedTheme);
-
   } catch (e) {
     console.error("LocalStorage load error: ", e);
   }
@@ -393,251 +340,214 @@ function loadLocalStorage() {
 function saveToLocalStorage() {
   try {
     localStorage.setItem("routy_saved_trips", JSON.stringify(state.savedTrips));
-    localStorage.setItem("routy_user", JSON.stringify(state.user));
-    localStorage.setItem("routy_kpi", JSON.stringify(state.kpi));
-    localStorage.setItem("routy_senior_mode", JSON.stringify(state.seniorMode));
     localStorage.setItem("routy_font_size_step", state.fontSizeStep.toString());
-    localStorage.setItem("routy_mock_users", JSON.stringify(state.mockUsers || []));
-    localStorage.setItem("routy_friends", JSON.stringify(state.friends));
   } catch (e) {
     console.error("LocalStorage write error: ", e);
+    showToast("저장 공간이 부족해 저장하지 못했습니다. 오래된 일정을 백업 후 삭제해 주세요.", 5000);
   }
 }
 
-// --- Mock User Authentication ---
-window.mockLogin = function(provider) {
-  let name = "길동이";
-  let email = "gildong@routy.com";
-  let avatar = "✈️";
+// --- 공통 헬퍼 ---
+const CATEGORY_LABELS = { sightseeing: "관광", restaurant: "맛집", cafe: "카페", shopping: "쇼핑", hotel: "숙소", transit: "이동" };
+const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
-  if (provider === 'kakao') {
-    name = "카카오 탐험가";
-    email = "kakao_traveler@kakao.com";
-    avatar = "💛";
-  } else if (provider === 'naver') {
-    name = "네이버 백패커";
-    email = "naver_backpacker@naver.com";
-    avatar = "💚";
-  } else if (provider === 'google') {
-    name = "구글 세계여행가";
-    email = "google_globetrotter@gmail.com";
-    avatar = "🌎";
-  }
-
-  state.user = {
-    loggedIn: true,
-    name: name,
-    email: email,
-    avatar: avatar
-  };
-  
-  saveToLocalStorage();
-  renderProfileTab();
-  showToast(`${name}님, 환영합니다!`);
-};
-
-window.mockLogout = function() {
-  const name = state.user.name;
-  state.user = {
-    loggedIn: false,
-    name: '',
-    email: '',
-    avatar: '👤'
-  };
-  saveToLocalStorage();
-  renderProfileTab();
-  showToast("로그아웃 되었습니다.");
-};
-
-function setupProfileAuth() {
-  const tabLogin = document.getElementById("tab-auth-login");
-  const tabSignup = document.getElementById("tab-auth-signup");
-  const groupName = document.getElementById("group-auth-name");
-  const nameInput = document.getElementById("auth-input-name");
-  const emailInput = document.getElementById("auth-input-email");
-  const passwordInput = document.getElementById("auth-input-password");
-  const submitBtn = document.getElementById("btn-email-auth-submit");
-  const authForm = document.getElementById("email-auth-form");
-  const emailAuthTrigger = document.getElementById("email-auth-trigger");
-  const emailAuthContainer = document.getElementById("email-auth-container");
-
-  if (emailAuthTrigger && emailAuthContainer) {
-    emailAuthTrigger.addEventListener("click", () => {
-      emailAuthContainer.classList.remove("hidden");
-      emailAuthTrigger.style.display = "none";
-    });
-  }
-
-  if (!tabLogin || !tabSignup || !groupName || !submitBtn || !authForm) return;
-
-  // Toggle to Login Mode
-  tabLogin.addEventListener("click", () => {
-    tabLogin.classList.add("active");
-    tabSignup.classList.remove("active");
-    groupName.style.display = "none";
-    submitBtn.textContent = "로그인";
-    if (nameInput) {
-      nameInput.removeAttribute("required");
-      nameInput.value = "";
-    }
-    if (emailInput) emailInput.value = "";
-    if (passwordInput) passwordInput.value = "";
-  });
-
-  // Toggle to Signup Mode
-  tabSignup.addEventListener("click", () => {
-    tabSignup.classList.add("active");
-    tabLogin.classList.remove("active");
-    groupName.style.display = "block";
-    submitBtn.textContent = "회원가입";
-    if (nameInput) {
-      nameInput.setAttribute("required", "required");
-      nameInput.value = "";
-    }
-    if (emailInput) emailInput.value = "";
-    if (passwordInput) passwordInput.value = "";
-  });
-
-  // Form Submit Handler
-  authForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-
-    const email = emailInput.value.trim();
-    const password = passwordInput.value;
-    const isSignup = tabSignup.classList.contains("active");
-
-    if (isSignup) {
-      const name = nameInput.value.trim();
-      if (!name) {
-        showToast("이름을 입력해주세요.");
-        return;
-      }
-      if (!email) {
-        showToast("이메일을 입력해주세요.");
-        return;
-      }
-      if (!password) {
-        showToast("비밀번호를 입력해주세요.");
-        return;
-      }
-
-      // Check duplicates
-      const exists = state.mockUsers.some(u => u.email.toLowerCase() === email.toLowerCase());
-      if (exists) {
-        showToast("이미 등록된 이메일 주소입니다.");
-        return;
-      }
-
-      // Register user
-      const newUser = { name, email, password };
-      state.mockUsers.push(newUser);
-      saveToLocalStorage();
-
-      // Auto Login
-      state.user = {
-        loggedIn: true,
-        name: name,
-        email: email,
-        avatar: "📧"
-      };
-      saveToLocalStorage();
-      renderProfileTab();
-      showToast(`${name}님, 회원가입을 축하합니다!`);
-
-      // Clear fields
-      nameInput.value = "";
-      emailInput.value = "";
-      passwordInput.value = "";
-    } else {
-      if (!email) {
-        showToast("이메일을 입력해주세요.");
-        return;
-      }
-      if (!password) {
-        showToast("비밀번호를 입력해주세요.");
-        return;
-      }
-
-      // Search match
-      const matched = state.mockUsers.find(
-        u => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-      );
-
-      if (matched) {
-        state.user = {
-          loggedIn: true,
-          name: matched.name,
-          email: matched.email,
-          avatar: "📧"
-        };
-        saveToLocalStorage();
-        renderProfileTab();
-        showToast(`${matched.name}님, 환영합니다!`);
-
-        // Clear fields
-        emailInput.value = "";
-        passwordInput.value = "";
-      } else {
-        showToast("이메일 또는 비밀번호가 잘못되었습니다.");
-      }
-    }
-  });
+function esc(str) {
+  return String(str === undefined || str === null ? "" : str).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
 }
 
-function renderProfileTab() {
-  const unauthCard = document.getElementById("profile-unauthenticated");
-  const authCard = document.getElementById("profile-authenticated");
-  
-  if (state.user.loggedIn) {
-    unauthCard.classList.add("hidden");
-    authCard.classList.remove("hidden");
-    
-    document.getElementById("user-name").textContent = state.user.name;
-    document.getElementById("user-email").textContent = state.user.email;
-    document.getElementById("user-avatar").textContent = state.user.avatar;
-    
-    document.getElementById("stat-count-trips").textContent = state.savedTrips.length;
-    document.getElementById("stat-count-clicks").textContent = state.kpi.clicks;
-    renderProfileFriends();
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function cloneTrip(trip) {
+  return JSON.parse(JSON.stringify(trip));
+}
+
+function isActiveTripSaved() {
+  return !!state.activeTrip && state.savedTrips.some(t => t.id === state.activeTrip.id);
+}
+
+// 저장된 일정이면 변경 즉시 자동 저장
+function persistActiveTrip() {
+  if (!state.activeTrip) return;
+  const i = state.savedTrips.findIndex(t => t.id === state.activeTrip.id);
+  if (i > -1) {
+    state.activeTrip.updatedAt = Date.now();
+    state.savedTrips[i] = cloneTrip(state.activeTrip);
+    saveToLocalStorage();
+  }
+  updateSaveButton();
+}
+
+function updateSaveButton() {
+  const btn = document.getElementById("btn-save-itinerary");
+  if (!btn) return;
+  const saved = isActiveTripSaved();
+  btn.textContent = saved ? "저장됨 ✓" : "저장";
+  btn.classList.toggle("is-saved", saved);
+}
+
+// 출발일 + day → Date
+function getTripDate(trip, day) {
+  if (!trip || !trip.startDate) return null;
+  const [y, m, d] = trip.startDate.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d + (day - 1));
+}
+
+function formatShortDate(date) {
+  return `${date.getMonth() + 1}/${date.getDate()}(${WEEKDAYS[date.getDay()]})`;
+}
+
+function isInKorea(lat, lng) {
+  return lat > 33 && lat < 38.7 && lng > 124.5 && lng < 131;
+}
+
+function getPlaceLinks(place) {
+  const trip = state.activeTrip || {};
+  const domestic = isInKorea(place.lat, place.lng);
+  const q = place.coordMissing ? `${place.name} ${trip.destination || ""}`.trim() : place.name;
+  const mapUrl = domestic
+    ? `https://map.naver.com/p/search/${encodeURIComponent(q)}`
+    : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+  let searchUrl;
+  if (place.category === "hotel") {
+    searchUrl = place.bookingUrl || `https://www.agoda.com/search?q=${encodeURIComponent(place.name)}`;
+  } else if (place.bookingUrl) {
+    searchUrl = place.bookingUrl;
   } else {
-    unauthCard.classList.remove("hidden");
-    authCard.classList.add("hidden");
-
-    // Reset login form fields and active tab when rendering unauthenticated state
-    const tabLogin = document.getElementById("tab-auth-login");
-    const tabSignup = document.getElementById("tab-auth-signup");
-    const groupName = document.getElementById("group-auth-name");
-    const nameInput = document.getElementById("auth-input-name");
-    const emailInput = document.getElementById("auth-input-email");
-    const passwordInput = document.getElementById("auth-input-password");
-    const submitBtn = document.getElementById("btn-email-auth-submit");
-
-    if (tabLogin && tabSignup && groupName && submitBtn) {
-      tabLogin.classList.add("active");
-      tabSignup.classList.remove("active");
-      groupName.style.display = "none";
-      submitBtn.textContent = "로그인";
-      if (nameInput) {
-        nameInput.removeAttribute("required");
-        nameInput.value = "";
-      }
-      if (emailInput) emailInput.value = "";
-      if (passwordInput) passwordInput.value = "";
-    }
-
-    const emailAuthTrigger = document.getElementById("email-auth-trigger");
-    const emailAuthContainer = document.getElementById("email-auth-container");
-    if (emailAuthTrigger && emailAuthContainer) {
-      emailAuthContainer.classList.add("hidden");
-      emailAuthTrigger.style.display = "block";
-    }
+    searchUrl = domestic
+      ? `https://search.naver.com/search.naver?query=${encodeURIComponent(q)}`
+      : `https://www.google.com/search?q=${encodeURIComponent(q)}`;
   }
+  return { mapUrl, searchUrl };
+}
+
+// --- 설정 화면 ---
+function setupSettings() {
+  const keyInput = document.getElementById("setting-api-key");
+  const modelInput = document.getElementById("setting-model");
+  const statusEl = document.getElementById("settings-status");
+
+  document.getElementById("btn-toggle-key-visibility").addEventListener("click", (e) => {
+    const show = keyInput.type === "password";
+    keyInput.type = show ? "text" : "password";
+    e.target.textContent = show ? "숨기기" : "보기";
+  });
+
+  const save = () => {
+    window.RoutyAI.saveSettings({
+      apiKey: keyInput.value.trim(),
+      model: modelInput.value.trim() || window.RoutyAI.DEFAULT_MODEL
+    });
+    updateAiNotice();
+  };
+
+  document.getElementById("btn-save-settings").addEventListener("click", () => {
+    save();
+    statusEl.textContent = keyInput.value.trim() ? "✅ 저장했습니다." : "API 키를 지웠습니다. 샘플 일정만 생성됩니다.";
+    statusEl.className = "settings-status ok";
+  });
+
+  document.getElementById("btn-test-settings").addEventListener("click", async () => {
+    save();
+    statusEl.textContent = "⏳ 연결 확인 중...";
+    statusEl.className = "settings-status";
+    try {
+      await window.RoutyAI.testApiKey();
+      statusEl.textContent = "✅ 연결 성공! 이제 AI 플래너를 사용할 수 있어요.";
+      statusEl.className = "settings-status ok";
+    } catch (e) {
+      statusEl.textContent = `❌ ${e.message}`;
+      statusEl.className = "settings-status error";
+    }
+  });
+
+  // 백업 / 복원
+  document.getElementById("btn-export-data").addEventListener("click", () => {
+    const payload = {
+      app: "routy",
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      trips: state.savedTrips
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `routy-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    showToast(`일정 ${state.savedTrips.length}개를 백업했습니다.`);
+  });
+
+  const fileInput = document.getElementById("input-import-file");
+  document.getElementById("btn-import-data").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const trips = Array.isArray(data) ? data : data.trips;
+      if (!Array.isArray(trips)) throw new Error("형식 오류");
+      let added = 0, updated = 0;
+      trips.forEach(t => {
+        if (!t || !t.id || !Array.isArray(t.places)) return;
+        ensureTripShape(t);
+        const i = state.savedTrips.findIndex(s => s.id === t.id);
+        if (i > -1) { state.savedTrips[i] = t; updated++; }
+        else { state.savedTrips.push(t); added++; }
+      });
+      saveToLocalStorage();
+      renderSettingsTab();
+      showToast(`불러오기 완료: 새 일정 ${added}개, 갱신 ${updated}개`);
+    } catch (e) {
+      showToast("백업 파일을 읽지 못했습니다. Routy 백업 파일인지 확인해 주세요.", 4000);
+    }
+  });
+
+  document.getElementById("btn-clear-data").addEventListener("click", () => {
+    if (!state.savedTrips.length) {
+      showToast("삭제할 일정이 없습니다.");
+      return;
+    }
+    if (!confirm(`저장된 일정 ${state.savedTrips.length}개를 모두 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    state.savedTrips = [];
+    saveToLocalStorage();
+    renderSettingsTab();
+    showToast("모든 일정을 삭제했습니다.");
+  });
+}
+
+function renderSettingsTab() {
+  const s = window.RoutyAI.getSettings();
+  document.getElementById("setting-api-key").value = s.apiKey;
+  document.getElementById("setting-model").value = s.model;
+  const statusEl = document.getElementById("settings-status");
+  if (statusEl && !statusEl.textContent) {
+    statusEl.textContent = s.apiKey ? "API 키가 등록되어 있습니다." : "";
+  }
+  const stats = document.getElementById("settings-stats");
+  if (stats) {
+    const placeCount = state.savedTrips.reduce((n, t) => n + (t.places || []).length, 0);
+    stats.innerHTML = `<span>저장된 일정 <strong>${state.savedTrips.length}</strong>개</span><span>장소 <strong>${placeCount}</strong>곳</span>`;
+  }
+}
+
+function updateAiNotice() {
+  const hasKey = window.RoutyAI.hasApiKey();
+  const notice = document.getElementById("ai-key-notice");
+  const label = document.getElementById("btn-generate-label");
+  if (notice) notice.style.display = hasKey ? "none" : "flex";
+  if (label) label.textContent = hasKey ? "AI 일정 생성하기" : "샘플 일정 만들기";
 }
 
 // --- Explore Tab: Templates Render ---
-function renderExploreTab() {
-  updateKpiStats();
-}
+function renderExploreTab() {}
 
 function setupExploreSearch() {
   const searchInput = document.getElementById("explore-search-input");
@@ -682,7 +592,7 @@ function renderTemplates() {
     const budgetLabel = template.budget === "high" ? "럭셔리" : template.budget === "low" ? "가성비" : "일반";
 
     card.innerHTML = `
-      <h3>${template.title.split(' (')[0]}</h3>
+      <h3>${esc(template.title.split(' (')[0])}</h3>
       <div class="template-meta-geo">${template.destination.replaceAll('/', ' · ')} · ${template.duration}일</div>
       ${state.seniorMode ? '' : `<p class="template-desc-single">${template.description}</p>`}
       <div class="template-meta-style">${styleText} · ${budgetLabel}</div>
@@ -701,10 +611,16 @@ function renderTemplates() {
     noResult.className = "no-search-results";
     noResult.innerHTML = `
       <div class="no-results-icon">🔍</div>
-      <p>"<strong>${query}</strong>"에 매칭되는 추천 템플릿이 없습니다.</p>
-      <span>다른 목적지(제주도, 도쿄, 오사카, 부산 등)를 입력해 보세요!</span>
+      <p>"<strong>${esc(query)}</strong>"에 맞는 추천 템플릿이 없습니다.</p>
+      <span>AI 플래너에서 바로 일정을 만들어 보세요!</span>
+      <button class="btn btn-sm btn-primary" style="margin-top:12px" id="btn-explore-to-planner">⚡ "${esc(query)}" 일정 만들기</button>
     `;
     container.appendChild(noResult);
+    const go = document.getElementById("btn-explore-to-planner");
+    if (go) go.addEventListener("click", () => {
+      document.getElementById("input-destination").value = searchInput.value.trim();
+      switchTab("planner");
+    });
   }
 }
 
@@ -712,6 +628,8 @@ function loadItineraryTemplate(template) {
   // Setup current active trip deep-cloning places
   state.activeTrip = {
     id: `template-${template.id}-${Date.now()}`,
+    source: "template",
+    summary: template.description,
     title: template.title,
     destination: template.destination,
     days: template.duration,
@@ -772,87 +690,147 @@ function setupSuggestions() {
   });
 }
 
-// --- Planner: Style tags ---
-const styleTags = document.querySelectorAll(".style-tags-container .style-tag");
-styleTags.forEach(tag => {
-  tag.addEventListener("click", () => {
-    styleTags.forEach(t => t.classList.remove("active"));
-    tag.classList.add("active");
+// --- Planner: Style tags (다중 선택) ---
+function setupStyleTags() {
+  document.querySelectorAll(".style-tags-container .style-tag").forEach(tag => {
+    tag.addEventListener("click", () => {
+      tag.classList.toggle("active");
+      if (!document.querySelector(".style-tags-container .style-tag.active")) {
+        tag.classList.add("active");
+      }
+    });
   });
-});
+}
 
 // --- Planner: AI Itinerary Generator form ---
+let generateController = null;
+let generateCancelledByUser = false;
+
 function setupPlannerForm() {
   const form = document.getElementById("planner-form");
   const loadingOverlay = document.getElementById("planner-loading-overlay");
   const statusText = document.getElementById("loading-status-text");
+  const elapsedEl = document.getElementById("loading-elapsed");
+  const cancelBtn = document.getElementById("btn-cancel-generate");
 
   if (!form) return;
+  setupStyleTags();
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    
-    const dest = document.getElementById("input-destination").value.trim();
-    const days = parseInt(document.getElementById("input-duration").value);
-    const budget = document.getElementById("input-budget").value;
-    
-    let style = "relaxing";
-    const activeStyleTag = document.querySelector(".style-tags-container .style-tag.active");
-    if (activeStyleTag) {
-      style = activeStyleTag.getAttribute("data-style");
+  cancelBtn.addEventListener("click", () => {
+    if (generateController) {
+      generateCancelledByUser = true;
+      generateController.abort();
     }
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const dest = document.getElementById("input-destination").value.trim();
+    const days = parseInt(document.getElementById("input-duration").value, 10);
+    const budget = document.getElementById("input-budget").value;
+    const party = document.getElementById("input-party").value;
+    const startDate = document.getElementById("input-start-date").value;
+    const request = document.getElementById("input-request").value.trim();
+    const styles = Array.from(document.querySelectorAll(".style-tags-container .style-tag.active"))
+      .map(t => t.getAttribute("data-style"));
+    if (styles.length === 0) styles.push("relaxing");
 
     if (!dest) {
       showToast("여행 목적지를 입력해 주세요.");
       return;
     }
 
-    // Trigger loading spinner
+    const useAI = window.RoutyAI.hasApiKey();
     loadingOverlay.classList.add("active");
-    
-    // Status text update simulation
-    const stages = [
-      { text: "현지 실시간 여행 트렌드 파악 중...", delay: 500 },
-      { text: "최적화된 일자별 동선 계산 중...", delay: 1100 },
-      { text: "Agoda 및 Klook 실시간 최저가 예약 링크 연동 중...", delay: 1700 }
-    ];
+    cancelBtn.style.display = useAI ? "" : "none";
 
-    stages.forEach(stage => {
-      setTimeout(() => {
-        statusText.textContent = stage.text;
-      }, stage.delay);
-    });
+    const messages = useAI
+      ? ["여행지 정보를 모으는 중...", "실제 장소와 동선을 고르는 중...", "시간표와 예상 비용을 계산하는 중...", "거의 다 됐어요. 일정을 다듬는 중..."]
+      : ["샘플 일정을 만드는 중..."];
+    let msgIdx = 0;
+    statusText.textContent = messages[0];
+    elapsedEl.textContent = "";
+    const t0 = Date.now();
+    const ticker = setInterval(() => {
+      const sec = Math.floor((Date.now() - t0) / 1000);
+      elapsedEl.textContent = `${sec}초 경과`;
+      if (sec > 0 && sec % 6 === 0 && msgIdx < messages.length - 1) {
+        msgIdx++;
+        statusText.textContent = messages[msgIdx];
+      }
+    }, 1000);
 
-    // Mock compilation & load
-    setTimeout(() => {
-      // Run the mock AI generator from templates.js
-      const places = window.generateItinerary(dest, days, budget, style);
-      
-      state.activeTrip = {
-        id: `ai-gen-${Date.now()}`,
-        title: `AI 추천 ${dest} ${days}일 여행`,
-        destination: dest,
-        days: days,
-        budget: budget,
-        style: style,
-        places: places
-      };
-      ensurePlacePrices(state.activeTrip);
+    const base = {
+      id: `trip-${Date.now()}`,
+      destination: dest,
+      days,
+      budget,
+      style: styles[0],
+      styles,
+      party,
+      startDate,
+      request,
+      createdAt: Date.now()
+    };
+
+    try {
+      let trip;
+      if (useAI) {
+        generateController = new AbortController();
+        generateCancelledByUser = false;
+        const timeout = setTimeout(() => generateController && generateController.abort(), 150000);
+        try {
+          const plan = await window.RoutyAI.generateTrip(
+            { destination: dest, days, budget, styles, party, startDate, request },
+            { signal: generateController.signal }
+          );
+          trip = Object.assign(base, {
+            title: plan.title || `${dest} ${days}일 여행`,
+            summary: plan.summary,
+            places: plan.places,
+            checklistSeed: plan.tips,
+            source: "ai"
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+      } else {
+        await sleep(900);
+        trip = Object.assign(base, {
+          title: `[샘플] ${dest} ${days}일 여행`,
+          summary: "API 키 없이 만든 샘플 일정입니다. 설정에서 Gemini 키를 등록하면 실제 장소로 일정을 짜 줍니다.",
+          places: window.generateItinerary(dest, days, budget, styles[0]),
+          source: "sample"
+        });
+      }
+
+      ensureTripShape(trip);
+      ensurePlacePrices(trip);
+      state.activeTrip = trip;
       state.activeTripDay = 1;
-      
-      // Update KPI Generations
-      state.kpi.generations += 1;
+
+      // AI 일정은 바로 내 일정에 자동 저장
+      state.savedTrips.unshift(cloneTrip(trip));
       saveToLocalStorage();
 
-      // Hide loading and show Itinerary view
-      loadingOverlay.classList.remove("active");
-      
-      // Reset form
       document.getElementById("input-destination").value = "";
-      
+      document.getElementById("input-request").value = "";
+
       showItineraryView();
-      showToast("AI 추천 여행 일정이 생성되었습니다!");
-    }, 2400);
+      showToast(useAI ? "AI 일정이 만들어졌어요! 내 일정에 자동 저장됩니다." : "샘플 일정을 만들었습니다.", 3000);
+    } catch (err) {
+      if (generateCancelledByUser) {
+        showToast("일정 생성을 취소했습니다.");
+      } else {
+        console.error(err);
+        showToast(err.message || "일정 생성 중 오류가 발생했습니다.", 5000);
+      }
+    } finally {
+      clearInterval(ticker);
+      generateController = null;
+      loadingOverlay.classList.remove("active");
+    }
   });
 }
 
@@ -892,78 +870,217 @@ function parseTimeToMinutes(timeStr) {
   return hours * 60 + minutes;
 }
 
-// --- Itinerary View: Back, Save & Tab actions ---
-function setupItineraryControls() {
-  // Back Button
-  document.getElementById("btn-itinerary-back").addEventListener("click", () => {
-    if (state.activeTrip.id.startsWith("template-")) {
-      switchTab("explore");
-    } else {
-      switchTab("planner");
+// --- 장소 검색 UI (OpenStreetMap) ---
+function setupPlaceSearch({ inputId, buttonId, resultsId, pickedId }) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(buttonId);
+  const results = document.getElementById(resultsId);
+  const pickedEl = document.getElementById(pickedId);
+  let picked = null;
+
+  const renderPicked = () => {
+    pickedEl.innerHTML = picked
+      ? `📍 위치 지정됨: ${esc(picked.address || picked.name)} <button type="button" class="link-btn" data-clear>해제</button>`
+      : "";
+  };
+
+  pickedEl.addEventListener("click", (e) => {
+    if (e.target.hasAttribute("data-clear")) {
+      picked = null;
+      renderPicked();
     }
   });
 
-  // Edit Mode Toggle Button
+  const run = async () => {
+    const q = input.value.trim();
+    if (!q) {
+      showToast("검색할 장소 이름을 입력해 주세요.");
+      return;
+    }
+    results.innerHTML = `<div class="place-search-msg">검색 중...</div>`;
+    const near = state.activeTrip && state.activeTrip.places.length
+      ? { lat: state.activeTrip.places[0].lat, lng: state.activeTrip.places[0].lng }
+      : null;
+    try {
+      let list = await window.RoutyAI.searchPlaces(q, near);
+      if (!list.length && state.activeTrip && state.activeTrip.destination) {
+        list = await window.RoutyAI.searchPlaces(`${q} ${state.activeTrip.destination}`, near);
+      }
+      if (!list.length) {
+        results.innerHTML = `<div class="place-search-msg">검색 결과가 없어요. 영어/현지어 이름으로도 시도해 보세요.</div>`;
+        return;
+      }
+      results.innerHTML = "";
+      list.forEach(r => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "place-search-item";
+        item.innerHTML = `<strong>${esc(r.name)}</strong><span>${esc(r.address)}</span>`;
+        item.addEventListener("click", () => {
+          picked = r;
+          results.innerHTML = "";
+          renderPicked();
+        });
+        results.appendChild(item);
+      });
+    } catch (e) {
+      results.innerHTML = `<div class="place-search-msg">${esc(e.message)}</div>`;
+    }
+  };
+
+  btn.addEventListener("click", run);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      run();
+    }
+  });
+
+  return {
+    getPicked: () => picked,
+    reset: () => {
+      picked = null;
+      results.innerHTML = "";
+      renderPicked();
+    }
+  };
+}
+
+let addPlaceSearch = null;
+let editPlaceSearch = null;
+let refineUndoTrip = null;
+
+function setRefineMode(mode) {
+  const btn = document.getElementById("btn-ai-refine");
+  if (!btn) return;
+  btn.dataset.mode = mode === "undo" ? "undo" : "";
+  btn.textContent = mode === "undo" ? "되돌리기" : "수정";
+  btn.classList.toggle("btn-undo", mode === "undo");
+}
+
+// --- Itinerary View: Back, Save & Tab actions ---
+function setupItineraryControls() {
+  document.getElementById("btn-itinerary-back").addEventListener("click", () => {
+    if (isActiveTripSaved()) switchTab("trips");
+    else if (state.activeTrip && state.activeTrip.source === "template") switchTab("explore");
+    else switchTab("planner");
+  });
+
   const toggleEditBtn = document.getElementById("btn-toggle-edit-mode");
   if (toggleEditBtn) {
     toggleEditBtn.addEventListener("click", () => {
       state.editMode = !state.editMode;
       const timelineContainer = document.getElementById("timeline-places-container");
-      if (timelineContainer) {
-        timelineContainer.classList.toggle("edit-mode-active", state.editMode);
-      }
+      if (timelineContainer) timelineContainer.classList.toggle("edit-mode-active", state.editMode);
       toggleEditBtn.classList.toggle("active", state.editMode);
       toggleEditBtn.textContent = state.editMode ? "완료" : "편집";
     });
   }
 
-  // Save Button
   document.getElementById("btn-save-itinerary").addEventListener("click", () => {
     if (!state.activeTrip) return;
-    
-    // Check if trip already saved to update, otherwise insert new
-    const index = state.savedTrips.findIndex(t => t.id === state.activeTrip.id);
-    
-    if (index > -1) {
-      state.savedTrips[index] = JSON.parse(JSON.stringify(state.activeTrip));
-      showToast("일정 수정사항이 반영되었습니다.");
+    const wasSaved = isActiveTripSaved();
+    if (wasSaved) {
+      persistActiveTrip();
     } else {
-      // Clone activeTrip & add
-      const tripToSave = JSON.parse(JSON.stringify(state.activeTrip));
-      state.savedTrips.push(tripToSave);
-      
-      state.kpi.saves += 1;
+      if (state.activeTrip.source === "template" || state.activeTrip.source === "shared") {
+        // 템플릿/공유 일정은 새 id로 내 일정에 복사
+        state.activeTrip.id = `trip-${Date.now()}`;
+        state.activeTrip.source = state.activeTrip.source === "shared" ? "shared-saved" : "template-saved";
+      }
+      state.activeTrip.createdAt = state.activeTrip.createdAt || Date.now();
+      state.savedTrips.unshift(cloneTrip(state.activeTrip));
+      saveToLocalStorage();
+      updateSaveButton();
     }
-    
-    saveToLocalStorage();
-
-    // Transition to confirmation screen
     const confirmTitleEl = document.getElementById("confirm-trip-title");
-    if (confirmTitleEl) {
-      confirmTitleEl.textContent = state.activeTrip.title;
-    }
+    if (confirmTitleEl) confirmTitleEl.textContent = state.activeTrip.title;
     switchTab("confirmation");
-    triggerConfetti();
+    if (!wasSaved) triggerConfetti();
   });
 
-  // Place Add Drawer triggers
+  // 빠른 도구
+  document.getElementById("btn-tool-share").addEventListener("click", () => shareItinerary());
+  document.getElementById("btn-tool-calendar").addEventListener("click", () => downloadCalendarIcs());
+  document.getElementById("btn-tool-checklist").addEventListener("click", () => openChecklistModal());
+  document.getElementById("btn-tool-print").addEventListener("click", () => openPdfPreview());
+
+  // AI 수정 요청
+  const refineForm = document.getElementById("ai-refine-form");
+  const refineInput = document.getElementById("ai-refine-input");
+  const refineBtn = document.getElementById("btn-ai-refine");
+  refineForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (refineBtn.dataset.mode === "undo") return;
+    const instruction = refineInput.value.trim();
+    if (!instruction || !state.activeTrip) return;
+    if (!window.RoutyAI.hasApiKey()) {
+      showToast("AI 수정은 설정에서 Gemini API 키를 등록해야 사용할 수 있어요.", 3500);
+      return;
+    }
+    refineBtn.disabled = true;
+    refineInput.disabled = true;
+    refineBtn.textContent = "수정 중...";
+    refineForm.classList.add("loading");
+    try {
+      const plan = await window.RoutyAI.refineTrip(state.activeTrip, instruction);
+      refineUndoTrip = cloneTrip(state.activeTrip);
+      state.activeTrip.places = plan.places;
+      if (plan.summary) state.activeTrip.summary = plan.summary;
+      if (plan.tips && plan.tips.length) state.activeTrip.checklistSeed = plan.tips;
+      ensureTripShape(state.activeTrip);
+      ensurePlacePrices(state.activeTrip);
+      refineInput.value = "";
+      renderItineraryAll();
+      persistActiveTrip();
+      setRefineMode("undo");
+      showToast("요청대로 일정을 수정했어요. 마음에 안 들면 '되돌리기'를 누르세요.", 3500);
+    } catch (err) {
+      showToast(err.message || "수정 중 오류가 발생했습니다.", 5000);
+    } finally {
+      refineBtn.disabled = false;
+      refineInput.disabled = false;
+      refineForm.classList.remove("loading");
+      if (refineBtn.dataset.mode !== "undo") setRefineMode("normal");
+    }
+  });
+
+  refineBtn.addEventListener("click", (ev) => {
+    if (refineBtn.dataset.mode !== "undo") return;
+    ev.preventDefault();
+    if (refineUndoTrip) {
+      state.activeTrip = refineUndoTrip;
+      refineUndoTrip = null;
+      renderItineraryAll();
+      persistActiveTrip();
+      showToast("수정 전 일정으로 되돌렸습니다.");
+    }
+    setRefineMode("normal");
+  });
+  refineInput.addEventListener("input", () => {
+    if (refineBtn.dataset.mode === "undo") setRefineMode("normal");
+  });
+
+  // 장소 추가 Drawer
   const toggleBtn = document.getElementById("btn-toggle-add-place");
   const drawer = document.getElementById("add-place-drawer");
-  const cancelBtn = document.getElementById("btn-cancel-add-place");
-  const confirmBtn = document.getElementById("btn-confirm-add-place");
+  addPlaceSearch = setupPlaceSearch({
+    inputId: "add-place-name",
+    buttonId: "btn-add-place-search",
+    resultsId: "add-place-results",
+    pickedId: "add-place-picked"
+  });
 
   toggleBtn.addEventListener("click", () => {
     drawer.classList.add("active");
     toggleBtn.classList.add("hidden");
+    document.getElementById("add-place-name").focus();
   });
+  document.getElementById("btn-cancel-add-place").addEventListener("click", closeAddPlaceDrawer);
 
-  cancelBtn.addEventListener("click", () => {
-    closeAddPlaceDrawer();
-  });
-
-  confirmBtn.addEventListener("click", () => {
+  document.getElementById("btn-confirm-add-place").addEventListener("click", () => {
     const name = document.getElementById("add-place-name").value.trim();
-    const time = document.getElementById("add-place-time").value.trim() || "시간 지정 없음";
+    const time = document.getElementById("add-place-time").value.trim() || "시간 미정";
     const category = document.getElementById("add-place-cat").value;
     const desc = document.getElementById("add-place-desc").value.trim();
     const priceInput = document.getElementById("add-place-price").value.trim();
@@ -974,129 +1091,291 @@ function setupItineraryControls() {
     }
 
     let price = priceInput ? parseInt(priceInput, 10) : NaN;
-    if (isNaN(price) || price < 0) {
-      price = getDeterministicPrice(name, category, state.activeTrip.budget);
-    }
+    if (isNaN(price) || price < 0) price = getDeterministicPrice(name, category, state.activeTrip.budget);
 
-    // Generate simulated coordinates slightly offset from first place or base center
-    let baseLat = 37.5665;
-    let baseLng = 126.9780;
-    
-    const dayPlaces = state.activeTrip.places.filter(p => p.day === state.activeTripDay);
-    if (dayPlaces.length > 0) {
-      baseLat = dayPlaces[0].lat;
-      baseLng = dayPlaces[0].lng;
+    const picked = addPlaceSearch.getPicked();
+    let lat, lng, coordMissing = false;
+    if (picked) {
+      lat = picked.lat;
+      lng = picked.lng;
+    } else {
+      const ref = state.activeTrip.places.find(p => p.day === state.activeTripDay) || state.activeTrip.places[0];
+      lat = ref ? ref.lat : 37.5665;
+      lng = ref ? ref.lng : 126.978;
+      coordMissing = true;
     }
-
-    const offsetLat = (Math.random() - 0.5) * 0.02;
-    const offsetLng = (Math.random() - 0.5) * 0.02;
 
     const newPlace = {
       day: state.activeTripDay,
       id: `custom-${Date.now()}`,
-      name: name,
-      time: time,
-      lat: baseLat + offsetLat,
-      lng: baseLng + offsetLng,
-      category: category,
-      price: price,
-      description: desc,
-      bookingUrl: category === "hotel" 
-        ? `https://www.agoda.com/search?q=${encodeURIComponent(name)}` 
-        : `https://search.naver.com/search.naver?query=${encodeURIComponent(name)}`
+      name, time, lat, lng, coordMissing, category, price,
+      description: desc
     };
 
-    // Smart insertion based on time order
+    // 시간 순서에 맞게 삽입 (숙소는 항상 마지막)
     const activeDayPlaces = state.activeTrip.places.filter(p => p.day === state.activeTripDay);
     const newTimeVal = parseTimeToMinutes(newPlace.time);
-
-    let insertIndex = -1;
-    let targetRelativeIndex = -1;
-
-    // Find the first place that is later than the new place, or is a hotel
-    for (let i = 0; i < activeDayPlaces.length; i++) {
-      const p = activeDayPlaces[i];
-      
-      // Hotels should always be at the end of the day, so insert before it
-      if (p.category === "hotel") {
-        targetRelativeIndex = i;
-        break;
-      }
-      
-      const pTimeVal = parseTimeToMinutes(p.time);
-      if (newTimeVal !== 9999 && pTimeVal !== 9999 && newTimeVal < pTimeVal) {
-        targetRelativeIndex = i;
-        break;
-      }
+    let target = null;
+    for (const p of activeDayPlaces) {
+      if (category !== "hotel" && p.category === "hotel") { target = p; break; }
+      const pt = parseTimeToMinutes(p.time);
+      if (newTimeVal !== 9999 && pt !== 9999 && newTimeVal < pt) { target = p; break; }
     }
-
-    if (targetRelativeIndex > -1) {
-      // Find the actual index of the target place in the global places array
-      const targetPlace = activeDayPlaces[targetRelativeIndex];
-      insertIndex = state.activeTrip.places.findIndex(p => p.id === targetPlace.id);
+    if (target) {
+      state.activeTrip.places.splice(state.activeTrip.places.indexOf(target), 0, newPlace);
     } else {
-      // If it should go to the end, find the index of the last place of this day
-      let lastIndex = -1;
-      for (let i = state.activeTrip.places.length - 1; i >= 0; i--) {
-        if (state.activeTrip.places[i].day === state.activeTripDay) {
-          lastIndex = i;
-          break;
-        }
-      }
-      if (lastIndex > -1) {
-        insertIndex = lastIndex + 1;
-      }
-    }
-
-    if (insertIndex > -1) {
-      state.activeTrip.places.splice(insertIndex, 0, newPlace);
-    } else {
-      state.activeTrip.places.push(newPlace);
+      const last = activeDayPlaces[activeDayPlaces.length - 1];
+      const idx = last ? state.activeTrip.places.indexOf(last) + 1 : state.activeTrip.places.length;
+      state.activeTrip.places.splice(idx, 0, newPlace);
     }
 
     closeAddPlaceDrawer();
     renderTimeline();
     updateMapMarkers();
-    showToast("장소가 일정에 추가되었습니다.");
+    persistActiveTrip();
+    showToast(picked ? "장소를 추가했습니다." : "장소를 추가했습니다. (위치 미지정 — 지도에는 대략적으로 표시)", 3000);
   });
 }
 
 function closeAddPlaceDrawer() {
   const toggleBtn = document.getElementById("btn-toggle-add-place");
   const drawer = document.getElementById("add-place-drawer");
-  
   drawer.classList.remove("active");
   toggleBtn.classList.remove("hidden");
-  
-  // Clear inputs
-  document.getElementById("add-place-name").value = "";
-  document.getElementById("add-place-time").value = "";
-  document.getElementById("add-place-price").value = "";
-  document.getElementById("add-place-desc").value = "";
+  ["add-place-name", "add-place-time", "add-place-price", "add-place-desc"].forEach(id => {
+    document.getElementById(id).value = "";
+  });
+  if (addPlaceSearch) addPlaceSearch.reset();
+}
+
+// --- 장소 편집 모달 ---
+let editingPlaceId = null;
+
+function setupPlaceEditModal() {
+  const overlay = document.getElementById("place-edit-modal-overlay");
+  editPlaceSearch = setupPlaceSearch({
+    inputId: "edit-place-name",
+    buttonId: "btn-edit-place-search",
+    resultsId: "edit-place-results",
+    pickedId: "edit-place-picked"
+  });
+  const close = () => {
+    overlay.classList.remove("active");
+    editingPlaceId = null;
+  };
+  document.getElementById("btn-close-place-edit").addEventListener("click", close);
+  document.getElementById("btn-cancel-place-edit").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+
+  document.getElementById("btn-confirm-place-edit").addEventListener("click", () => {
+    const place = state.activeTrip && state.activeTrip.places.find(p => p.id === editingPlaceId);
+    if (!place) return close();
+    const name = document.getElementById("edit-place-name").value.trim();
+    if (!name) {
+      showToast("장소 이름을 입력해 주세요.");
+      return;
+    }
+    const oldTime = place.time;
+    const oldDay = place.day;
+    place.name = name;
+    place.time = document.getElementById("edit-place-time").value.trim() || "시간 미정";
+    place.day = parseInt(document.getElementById("edit-place-day").value, 10) || place.day;
+    place.category = document.getElementById("edit-place-cat").value;
+    const price = parseInt(document.getElementById("edit-place-price").value, 10);
+    place.price = isNaN(price) || price < 0 ? 0 : price;
+    place.description = document.getElementById("edit-place-desc").value.trim();
+    const picked = editPlaceSearch.getPicked();
+    if (picked) {
+      place.lat = picked.lat;
+      place.lng = picked.lng;
+      place.coordMissing = false;
+    }
+    if (place.day !== oldDay || place.time !== oldTime) {
+      // 다른 날로 옮기면 그날 맨 끝으로
+      if (place.day !== oldDay) {
+        state.activeTrip.places.splice(state.activeTrip.places.indexOf(place), 1);
+        state.activeTrip.places.push(place);
+      }
+      sortTripPlaces(state.activeTrip, place.day);
+    }
+    close();
+    renderTimeline();
+    updateMapMarkers();
+    persistActiveTrip();
+    showToast("장소 정보를 수정했습니다.");
+  });
+}
+
+function openPlaceEdit(placeId) {
+  const place = state.activeTrip && state.activeTrip.places.find(p => p.id === placeId);
+  if (!place) return;
+  editingPlaceId = placeId;
+  if (window.closeSeniorDetailModal) window.closeSeniorDetailModal();
+  document.getElementById("edit-place-name").value = place.name || "";
+  document.getElementById("edit-place-time").value = place.time || "";
+  document.getElementById("edit-place-cat").value = place.category || "sightseeing";
+  document.getElementById("edit-place-price").value = place.price || 0;
+  document.getElementById("edit-place-desc").value = place.description || "";
+  const daySel = document.getElementById("edit-place-day");
+  daySel.innerHTML = "";
+  for (let d = 1; d <= state.activeTrip.days; d++) {
+    const date = getTripDate(state.activeTrip, d);
+    const opt = document.createElement("option");
+    opt.value = d;
+    opt.textContent = `Day ${d}${date ? ` · ${formatShortDate(date)}` : ""}`;
+    if (d === place.day) opt.selected = true;
+    daySel.appendChild(opt);
+  }
+  editPlaceSearch.reset();
+  document.getElementById("place-edit-modal-overlay").classList.add("active");
+}
+
+// 하루 일정을 시간순 정렬 (시간 미정은 상대 순서 유지, 숙소는 맨 끝)
+function sortTripPlaces(trip, day) {
+  const dayPlaces = trip.places.filter(p => p.day === day);
+  const order = dayPlaces.map((p, i) => ({ p, i }));
+  order.sort((a, b) => {
+    const ah = a.p.category === "hotel" ? 1 : 0;
+    const bh = b.p.category === "hotel" ? 1 : 0;
+    if (ah !== bh) return ah - bh;
+    const at = parseTimeToMinutes(a.p.time);
+    const bt = parseTimeToMinutes(b.p.time);
+    if (at !== 9999 && bt !== 9999 && at !== bt) return at - bt;
+    return a.i - b.i;
+  });
+  const others = trip.places.filter(p => p.day !== day);
+  const sorted = order.map(o => o.p);
+  // 날짜 순서대로 재구성
+  const result = [];
+  for (let d = 1; d <= trip.days; d++) {
+    if (d === day) result.push(...sorted);
+    else result.push(...others.filter(p => p.day === d));
+  }
+  result.push(...others.filter(p => p.day < 1 || p.day > trip.days));
+  trip.places = result;
+}
+
+function movePlace(placeId, dir) {
+  const places = state.activeTrip.places;
+  const place = places.find(p => p.id === placeId);
+  if (!place) return;
+  const dayPlaces = places.filter(p => p.day === place.day);
+  const i = dayPlaces.indexOf(place);
+  const j = i + dir;
+  if (j < 0 || j >= dayPlaces.length) return;
+  const a = places.indexOf(place);
+  const b = places.indexOf(dayPlaces[j]);
+  places[a] = dayPlaces[j];
+  places[b] = place;
+  renderTimeline();
+  updateMapMarkers();
+  persistActiveTrip();
+}
+
+function deletePlaceById(placeId) {
+  const idx = state.activeTrip.places.findIndex(p => p.id === placeId);
+  if (idx < 0) return;
+  const [removed] = state.activeTrip.places.splice(idx, 1);
+  if (window.closeSeniorDetailModal) window.closeSeniorDetailModal();
+  renderTimeline();
+  updateMapMarkers();
+  persistActiveTrip();
+  showToast(`"${removed.name}"을(를) 삭제했습니다.`);
+}
+
+// 타임라인 / 상세 모달 버튼 공통 처리
+function setupPlaceActionDelegation() {
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action][data-id]");
+    if (!btn || !state.activeTrip) return;
+    e.stopPropagation();
+    const id = btn.getAttribute("data-id");
+    const place = state.activeTrip.places.find(p => p.id === id);
+    if (!place) return;
+    const action = btn.getAttribute("data-action");
+    if (action === "map") window.open(getPlaceLinks(place).mapUrl, "_blank", "noopener");
+    else if (action === "search") window.open(getPlaceLinks(place).searchUrl, "_blank", "noopener");
+    else if (action === "edit") openPlaceEdit(id);
+    else if (action === "up") movePlace(id, -1);
+    else if (action === "down") movePlace(id, 1);
+    else if (action === "delete") {
+      if (confirm(`"${place.name}"을(를) 일정에서 삭제할까요?`)) deletePlaceById(id);
+    }
+  });
 }
 
 // --- Itinerary: Screen Activation ---
+function renderTripMeta() {
+  const el = document.getElementById("trip-meta-row");
+  if (!el || !state.activeTrip) return;
+  const t = state.activeTrip;
+  const bits = [];
+  const start = getTripDate(t, 1);
+  if (start && t.days > 1) bits.push(`~ ${formatShortDate(getTripDate(t, t.days))}`);
+  bits.push(`${t.days}일`);
+  if (t.party) bits.push(`👥 ${esc(t.party.split(",")[0])}`);
+  const badge = t.source === "ai" ? `<span class="trip-source-badge ai">AI 생성</span>`
+    : t.source === "sample" ? `<span class="trip-source-badge sample">샘플</span>`
+    : t.source === "shared" ? `<span class="trip-source-badge shared">공유받음</span>` : "";
+  el.innerHTML = `
+    <div class="trip-meta-line">
+      ${badge}
+      <label class="trip-date-picker" title="출발일 지정">📆 <input type="date" id="trip-start-date-input" value="${esc(t.startDate || "")}"></label>
+      <span>${bits.join(" · ")}</span>
+    </div>
+    ${t.summary ? `<p class="trip-summary">${esc(t.summary)}</p>` : ""}
+  `;
+  document.getElementById("trip-start-date-input").addEventListener("change", (e) => {
+    state.activeTrip.startDate = e.target.value;
+    renderTripMeta();
+    renderDayTabs();
+    renderTimeline();
+    persistActiveTrip();
+  });
+}
+
+function setupTitleRename() {
+  const titleEl = document.getElementById("itinerary-title");
+  titleEl.title = "눌러서 제목 바꾸기";
+  titleEl.style.cursor = "pointer";
+  titleEl.addEventListener("click", () => {
+    if (!state.activeTrip) return;
+    const next = prompt("일정 제목", state.activeTrip.title);
+    if (next && next.trim()) {
+      state.activeTrip.title = next.trim();
+      titleEl.textContent = state.activeTrip.title;
+      persistActiveTrip();
+    }
+  });
+}
+
+function renderItineraryAll() {
+  document.getElementById("itinerary-title").textContent = state.activeTrip.title;
+  renderTripMeta();
+  renderDayTabs();
+  renderTimeline();
+  updateMapMarkers();
+  updateSaveButton();
+}
+
 function showItineraryView() {
   if (!state.activeTrip) return;
+  ensureTripShape(state.activeTrip);
 
-  // Ensure trip collaborators and comments are initialized
-  ensureTripCollaboratorsAndComments(state.activeTrip);
-
-  // Reset Edit Mode
   state.editMode = false;
   const toggleEditBtn = document.getElementById("btn-toggle-edit-mode");
   if (toggleEditBtn) {
     toggleEditBtn.classList.remove("active");
     toggleEditBtn.textContent = "편집";
   }
+  // 이전 일정의 되돌리기 상태 초기화
+  refineUndoTrip = null;
+  setRefineMode("normal");
+  if (state.activeTripDay > state.activeTrip.days) state.activeTripDay = 1;
 
-  // Direct active view transition
   switchTab("itinerary");
-
-  // Setup Title
   document.getElementById("itinerary-title").textContent = state.activeTrip.title;
 
-  // Reset Map collapse button state in senior mode
   const btnToggleMap = document.getElementById("btn-toggle-map");
   const mapWrapper = document.getElementById("map-wrapper");
   if (btnToggleMap && mapWrapper) {
@@ -1105,13 +1384,9 @@ function showItineraryView() {
     btnToggleMap.textContent = "🗺️ 지도 순서도 보기";
   }
 
-  // Initialize Map wrapper
   setTimeout(() => {
     initLeafletMap();
-    renderDayTabs();
-    renderTimeline();
-    updateMapMarkers();
-    renderCollaboratorsBar();
+    renderItineraryAll();
   }, 100);
 }
 
@@ -1210,7 +1485,8 @@ function renderDayTabs() {
   for (let d = 1; d <= state.activeTrip.days; d++) {
     const tab = document.createElement("div");
     tab.className = `day-tab ${d === state.activeTripDay ? 'active' : ''}`;
-    tab.textContent = `Day ${d}`;
+    const tabDate = getTripDate(state.activeTrip, d);
+    tab.innerHTML = tabDate ? `Day ${d}<small class="day-tab-date">${formatShortDate(tabDate)}</small>` : `Day ${d}`;
     tab.addEventListener("click", () => {
       state.activeTripDay = d;
       
@@ -1259,27 +1535,24 @@ function renderDayTabs() {
 // --- Timeline Render (Schedules Lists) ---
 function getTransitTips(placeName) {
   const name = placeName || '';
-  if (name.includes("택시")) {
-    return "🚕 호출 앱(우버, 카카오T 등) 사용 권장 | 기본요금 수준 적용";
-  } else if (name.includes("지하철") || name.includes("메트로")) {
-    return "🚇 현지 교통카드(수이카, 이코카 등) 태그 또는 1회권 발권기 구매";
-  } else if (name.includes("시내버스") || name.includes("버스")) {
-    return "🚌 승차 시 교통카드를 태그하거나 현금을 잔돈 없이 준비하세요";
-  } else if (name.includes("렌터카") || name.includes("차량")) {
-    return "🚗 국제운전면허증 지참 필수 | 주차 사전 확인 권장";
-  } else if (name.includes("도보")) {
-    return "🚶 가까운 도보 코스 | 편안한 신발 착용 추천";
-  }
-  return "🚌 현지 대중교통 또는 도보로 편리하게 이동 가능";
+  if (name.includes("택시")) return "🚕 호출 앱(우버, 카카오T 등) 사용 권장";
+  if (name.includes("지하철") || name.includes("메트로")) return "🚇 현지 교통카드 태그 또는 1회권 발권기 구매";
+  if (name.includes("버스")) return "🚌 승차 시 교통카드를 태그하거나 잔돈을 준비하세요";
+  if (name.includes("렌터카") || name.includes("차량")) return "🚗 국제운전면허증 지참 | 주차 사전 확인 권장";
+  if (name.includes("도보")) return "🚶 가까운 도보 코스 | 편안한 신발 추천";
+  return "";
+}
+
+function getTripTotal(trip) {
+  return trip.places.reduce((sum, p) => sum + (p.price || 0), 0);
 }
 
 function renderTimeline() {
   const container = document.getElementById("timeline-places-container");
-  if (!container) return;
+  if (!container || !state.activeTrip) return;
 
   container.innerHTML = "";
 
-  // Show/Hide edit mode button based on senior mode
   const editBtn = document.getElementById("btn-toggle-edit-mode");
   if (editBtn) {
     editBtn.style.display = state.seniorMode ? "none" : "block";
@@ -1291,131 +1564,85 @@ function renderTimeline() {
   }
   container.classList.toggle("edit-mode-active", !!state.editMode);
 
-  // Update dynamic total budget
-  if (state.activeTrip) {
-    const totalBudget = state.activeTrip.places.reduce((sum, p) => sum + (p.price || 0), 0);
-    const totalBudgetEl = document.getElementById("itinerary-total-budget");
-    if (totalBudgetEl) {
-      totalBudgetEl.textContent = `₩${totalBudget.toLocaleString()}`;
-    }
-  }
-  
+  const totalBudgetEl = document.getElementById("itinerary-total-budget");
+  if (totalBudgetEl) totalBudgetEl.textContent = `₩${getTripTotal(state.activeTrip).toLocaleString()}`;
+
   const dayPlaces = state.activeTrip.places.filter(p => p.day === state.activeTripDay);
-  
+  const dayTotal = dayPlaces.reduce((s, p) => s + (p.price || 0), 0);
+
   if (dayPlaces.length === 0) {
-    container.innerHTML = `<p class="empty-timeline-msg">일정에 등록된 장소가 없습니다. 아래 버튼으로 장소를 추가해보세요.</p>`;
+    container.innerHTML = `<p class="empty-timeline-msg">이 날은 아직 일정이 없습니다. 위 버튼으로 장소를 추가해 보세요.</p>`;
     return;
   }
+
+  const dayHeader = document.createElement("div");
+  dayHeader.className = "day-summary-line";
+  const date = getTripDate(state.activeTrip, state.activeTripDay);
+  dayHeader.textContent = `${date ? formatShortDate(date) + " · " : ""}${dayPlaces.length}곳 · 1인 약 ₩${dayTotal.toLocaleString()}`;
+  container.appendChild(dayHeader);
 
   dayPlaces.forEach((place, index) => {
     const card = document.createElement("div");
     card.className = "timeline-item";
     card.setAttribute("data-cat", place.category);
-    
-    // Convert category code to Korean name
-    let catKorean = "관광";
-    if (place.category === "restaurant") catKorean = "맛집";
-    else if (place.category === "cafe") catKorean = "카페";
-    else if (place.category === "hotel") catKorean = "숙소";
-    else if (place.category === "transit") catKorean = "이동";
-    else if (place.category === "shopping") catKorean = "쇼핑";
 
-    // Setup edit index
-    const isFirst = index === 0;
-    const isLast = index === dayPlaces.length - 1;
+    const catKorean = CATEGORY_LABELS[place.category] || "관광";
+    const id = esc(place.id);
+    const isTransit = place.category === "transit";
+    const tips = isTransit ? getTransitTips(place.name) : "";
 
-    let isReservable = true;
-    if (place.category === 'transit') {
-      const name = place.name || '';
-      const desc = place.description || '';
-      // 일반 택시, 시내버스, 지하철, 도보 등 예약이 불가능한 교통수단은 예외 처리
-      const nonReservableKeywords = ["택시", "지하철", "시내버스", "시내 버스", "메트로", "도보", "걷기", "렌터카", "렌트카", "정류장", "버스정류소", "버스정류장"];
-      const hasNonReservable = nonReservableKeywords.some(kw => name.includes(kw) || desc.includes(kw));
-      
-      if (hasNonReservable) {
-        isReservable = false;
-      } else {
-        const reservableKeywords = ["기차", "KTX", "SRT", "열차", "하루카", "스카이라이너", "항공", "비행기", "고속버스", "시외버스", "철도", "신칸센", "유로스타", "익스프레스", "리무진"];
-        isReservable = reservableKeywords.some(kw => name.includes(kw) || desc.includes(kw));
-      }
-    }
-
-    let controlsHtml = "";
-    let otaButtonHtml = "";
-    let transitGuideHtml = "";
-    
-    if (place.category === 'transit' && !isReservable) {
-      // 일반 택시, 시내버스, 지하철은 예약 버튼 대신 경로 안내 표시
-      transitGuideHtml = `
-        <div class="transit-guide-box">
-          <div class="guide-header">
-            <span class="guide-icon">🗺️</span>
-            <strong>타는 법 & 경로 안내</strong>
-          </div>
-          <div class="guide-body">
-            <p class="guide-text">${place.description || '대중교통을 이용하여 다음 목적지로 이동합니다.'}</p>
-            <div class="guide-tips">${getTransitTips(place.name)}</div>
-          </div>
-        </div>
-      `;
-    } else {
-      // 예약 가능한 일반 장소/예약 가능 교통편
-      otaButtonHtml = `
-        <button class="btn-ota" onclick="handleOtaBookingClick('${place.name}', '${place.bookingUrl}', '${place.category}')">
-          ${place.category === 'hotel' ? (state.seniorMode ? '🏨 최저가 예약하기' : '🏨 최저가 예약') : (state.seniorMode ? '🎟️ 예약하기' : '🎟️ 티켓 예매')} →
-        </button>
-      `;
-    }
-
-    if (state.seniorMode) {
-      controlsHtml = `
-        <button class="btn-ctrl btn-delete" onclick="deletePlace(${index})">🗑️ 장소 삭제하기</button>
-        <button class="btn-ctrl btn-comments" style="background-color: var(--primary-light); color: var(--primary-solid); border: none;" onclick="openPlaceComments('${place.id}')">💬 한줄평 (${(place.comments || []).length}개)</button>
-        ${otaButtonHtml}
-      `;
-    } else {
-      controlsHtml = `
-        <div class="edit-btn-group">
-          <button class="btn-ctrl btn-delete" onclick="deletePlace(${index})">🗑️ 삭제</button>
-        </div>
-        ${otaButtonHtml}
-      `;
-    }
-
-    const priceHtml = place.price === 0
+    const priceHtml = !place.price
       ? `<span class="place-price-tag free">무료</span>`
-      : `<span class="place-price-tag">최저가 ₩${place.price.toLocaleString()}</span>`;
+      : `<span class="place-price-tag">약 ₩${place.price.toLocaleString()}</span>`;
+
+    const searchLabel = place.category === "hotel" ? "🏨 숙소 검색" : place.category === "restaurant" || place.category === "cafe" ? "🔎 리뷰 검색" : "🔎 정보 검색";
+    const coordWarn = place.coordMissing ? `<span class="coord-warn" title="정확한 위치가 지정되지 않았어요. 편집에서 위치를 찾아주세요.">📍?</span>` : "";
+
+    const linkButtons = `
+      <button class="btn-ota" data-action="map" data-id="${id}">🗺️ 지도</button>
+      ${isTransit ? "" : `<button class="btn-ota" data-action="search" data-id="${id}">${searchLabel}</button>`}
+    `;
 
     if (state.seniorMode) {
+      const controlsHtml = `
+        <button class="btn-ctrl btn-senior-link" data-action="map" data-id="${id}">🗺️ 지도에서 보기</button>
+        ${isTransit ? "" : `<button class="btn-ctrl btn-senior-link" data-action="search" data-id="${id}">${searchLabel}</button>`}
+        <button class="btn-ctrl btn-senior-edit" data-action="edit" data-id="${id}">✏️ 편집하기</button>
+        <button class="btn-ctrl btn-delete" data-action="delete" data-id="${id}">🗑️ 장소 삭제하기</button>
+      `;
       card.innerHTML = `
         <div class="timeline-dot"></div>
         <div class="timeline-header-row">
-          <span class="time-badge">🕒 ${place.time}</span>
-          <span class="place-cat-badge cat-${place.category}">${catKorean}</span>
+          <span class="time-badge">🕒 ${esc(place.time)}</span>
+          <span class="place-cat-badge cat-${esc(place.category)}">${catKorean}</span>
           ${priceHtml}
         </div>
-        <div class="place-name">${index + 1}. ${place.name}</div>
-        <div class="click-guide" style="font-size: 14px; color: var(--primary-solid); font-weight: bold; margin-top: 4px; display: flex; align-items: center; gap: 4px; user-select: none;">🔍 상세내용 보기 (누르세요)</div>
+        <div class="place-name">${index + 1}. ${esc(place.name)}</div>
+        <div class="click-guide">🔍 상세내용 보기 (누르세요)</div>
       `;
-      card.onclick = () => {
-        openSeniorDetailModal(place, index, catKorean, transitGuideHtml, controlsHtml);
-      };
+      const tipsHtml = tips ? `<div class="transit-guide-box"><div class="guide-tips">${tips}</div></div>` : "";
+      card.onclick = () => openSeniorDetailModal(place, index, catKorean, tipsHtml, controlsHtml);
     } else {
       card.onclick = null;
       card.innerHTML = `
         <div class="timeline-dot"></div>
         <div class="timeline-item-header">
-          <span class="timeline-time">${place.time}</span>
+          <span class="timeline-time">${esc(place.time)}</span>
           <span class="timeline-title-sep">—</span>
-          <span class="timeline-place-name">${place.name}</span>
+          <span class="timeline-place-name">${esc(place.name)}</span>
+          ${coordWarn}
           ${priceHtml}
         </div>
-        ${place.description && (place.category !== 'transit' || isReservable) ? `<p class="timeline-desc">${place.description}</p>` : ''}
-        ${transitGuideHtml}
+        ${place.description ? `<p class="timeline-desc">${esc(place.description)}</p>` : ""}
+        ${tips ? `<p class="timeline-desc transit-tip">${tips}</p>` : ""}
         <div class="timeline-actions">
-          <button class="btn-timeline-comments" onclick="openPlaceComments('${place.id}')">💬 한줄평 (${(place.comments || []).length})</button>
-          ${otaButtonHtml}
-          <button class="timeline-delete-action" onclick="deletePlace(${index})">삭제</button>
+          ${linkButtons}
+          <button class="btn-timeline-comments" data-action="edit" data-id="${id}">✏️ 편집</button>
+          <span class="edit-only-actions">
+            <button class="btn-move" data-action="up" data-id="${id}" ${index === 0 ? "disabled" : ""} title="위로">▲</button>
+            <button class="btn-move" data-action="down" data-id="${id}" ${index === dayPlaces.length - 1 ? "disabled" : ""} title="아래로">▼</button>
+            <button class="timeline-delete-action" data-action="delete" data-id="${id}">삭제</button>
+          </span>
         </div>
       `;
     }
@@ -1424,35 +1651,10 @@ function renderTimeline() {
   });
 }
 
-// --- Timeline interactions: Reordering & Deleting ---
-window.deletePlace = function(dayIndex) {
-  if (!state.activeTrip) return;
-
-  const dayPlaces = state.activeTrip.places.filter(p => p.day === state.activeTripDay);
-  const targetPlace = dayPlaces[dayIndex];
-  
-  if (!targetPlace) return;
-
-  const fullIdx = state.activeTrip.places.findIndex(p => p.id === targetPlace.id);
-  
-  if (fullIdx > -1) {
-    state.activeTrip.places.splice(fullIdx, 1);
-    
-    // Close senior detail modal if open
-    if (window.closeSeniorDetailModal) {
-      window.closeSeniorDetailModal();
-    }
-    
-    renderTimeline();
-    updateMapMarkers();
-    showToast("장소가 일정에서 삭제되었습니다.");
-  }
-};
-
 // --- Leaflet Map Engine ---
 function initLeafletMap() {
   const mapContainer = document.getElementById("map");
-  if (!mapContainer) return;
+  if (!mapContainer || typeof L === "undefined") return;
 
   // If map already initialized, just return
   if (leafletMap !== null) {
@@ -1482,7 +1684,7 @@ function initLeafletMap() {
 }
 
 function updateMapMarkers() {
-  if (!leafletMap || !mapMarkersGroup) return;
+  if (!leafletMap || !mapMarkersGroup || !state.activeTrip) return;
 
   // Clear previous layers
   mapMarkersGroup.clearLayers();
@@ -1522,9 +1724,9 @@ function updateMapMarkers() {
     // Add custom styled popup
     marker.bindPopup(`
       <div class="map-popup-title">
-        ${index + 1}. ${place.name}
+        ${index + 1}. ${esc(place.name)}
       </div>
-      <div class="map-popup-time">🕒 ${place.time}</div>
+      <div class="map-popup-time">🕒 ${esc(place.time)}</div>
     `, {
       closeButton: false,
       className: "custom-map-popup"
@@ -1549,54 +1751,6 @@ function updateMapMarkers() {
       }).addTo(leafletMap);
     }
   }
-}
-
-// --- OTA Booking Click Event Tracker ---
-let pendingBooking = null; // Storing active booking redirection details
-
-window.handleOtaBookingClick = function(placeName, url, category) {
-  pendingBooking = { placeName, url, category };
-  
-  // Trigger overlay confirm modal
-  const modal = document.getElementById("booking-modal-overlay");
-  document.getElementById("modal-place-name").textContent = placeName;
-  modal.classList.add("active");
-};
-
-function setupBookingModal() {
-  const modal = document.getElementById("booking-modal-overlay");
-  const cancelBtn = document.getElementById("btn-booking-cancel");
-  const confirmBtn = document.getElementById("btn-booking-confirm");
-
-  cancelBtn.addEventListener("click", () => {
-    modal.classList.remove("active");
-    pendingBooking = null;
-  });
-
-  confirmBtn.addEventListener("click", () => {
-    if (pendingBooking) {
-      // Record KPI click event
-      state.kpi.clicks += 1;
-      
-      const log = {
-        id: `click-${Date.now()}`,
-        placeName: pendingBooking.placeName,
-        category: pendingBooking.category,
-        timestamp: new Date().toLocaleTimeString('ko-KR')
-      };
-      state.kpi.clickLogs.unshift(log); // Add at front
-      
-      saveToLocalStorage();
-      updateKpiStats();
-
-      // Launch actual redirect in new tab
-      window.open(pendingBooking.url, '_blank');
-      
-      // Close modal
-      modal.classList.remove("active");
-      pendingBooking = null;
-    }
-  });
 }
 
 function setupSeniorDetailModal() {
@@ -1628,25 +1782,22 @@ window.openSeniorDetailModal = function(place, index, catKorean, transitGuideHtm
 
   if (!overlay) return;
 
-  if (timeEl) timeEl.innerHTML = `🕒 ${place.time}`;
+  if (timeEl) timeEl.textContent = `🕒 ${place.time}`;
   if (catEl) {
     catEl.className = `senior-modal-cat cat-${place.category}`;
     catEl.innerText = catKorean;
   }
   if (priceEl) {
-    const isFree = place.price === 0;
+    const isFree = !place.price;
     priceEl.className = `senior-modal-price-badge ${isFree ? 'free' : ''}`;
-    priceEl.innerText = isFree ? '비용: 무료' : `최저가 ₩${place.price.toLocaleString()}`;
+    priceEl.innerText = isFree ? '비용: 무료' : `1인 약 ₩${(place.price || 0).toLocaleString()}`;
   }
   if (titleEl) titleEl.innerText = `${index + 1}. ${place.name}`;
   
   if (descEl) {
-    const nonReservableKeywords = ["택시", "지하철", "시내버스", "시내 버스", "메트로", "도보", "걷기", "렌터카", "렌트카", "정류장", "버스정류소", "버스정류장"];
-    const isReservable = !nonReservableKeywords.some(kw => (place.name || '').includes(kw) || (place.description || '').includes(kw));
-    const showDesc = place.description && (place.category !== 'transit' || isReservable);
-    if (showDesc) {
+    if (place.description) {
       descEl.style.display = "block";
-      descEl.innerHTML = `<p class="place-description">${place.description}</p>`;
+      descEl.innerHTML = `<p class="place-description">${esc(place.description)}</p>`;
     } else {
       descEl.style.display = "none";
     }
@@ -1680,7 +1831,6 @@ window.closeSeniorDetailModal = function() {
 function renderSavedTrips() {
   const container = document.getElementById("saved-trips-list");
   if (!container) return;
-
   container.innerHTML = "";
 
   if (state.savedTrips.length === 0) {
@@ -1688,24 +1838,51 @@ function renderSavedTrips() {
       <div class="empty-logs" style="padding: 40px 10px;">
         <span style="font-size:32px; display:block; margin-bottom:12px;">📅</span>
         <p>저장된 여행 일정이 없습니다.</p>
-        <p style="font-size:11px; margin-top:4px;">AI 플래너를 이용해 나만의 여행 계획을 세워보세요.</p>
+        <p style="font-size:11px; margin-top:4px;">AI 플래너로 첫 여행 계획을 세워보세요.</p>
       </div>
     `;
     return;
   }
 
-  state.savedTrips.forEach((trip, index) => {
+  // 다가오는 여행 → 날짜 미정 → 지난 여행 순
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const rank = (t) => {
+    const end = getTripDate(t, t.days);
+    if (!end) return 1;
+    return end >= today ? 0 : 2;
+  };
+  const sorted = state.savedTrips.slice().sort((a, b) => {
+    const ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 0) return (a.startDate || "").localeCompare(b.startDate || "");
+    if (ra === 2) return (b.startDate || "").localeCompare(a.startDate || "");
+    return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+  });
+
+  sorted.forEach(trip => {
     const card = document.createElement("div");
     card.className = "saved-trip-item";
-    
-    card.innerHTML = `
-      <div class="saved-trip-info" onclick="loadSavedTrip('${trip.id}')">
-        <h3>${trip.title}</h3>
-        <p>📍 ${trip.destination} | 📅 ${trip.days}일 코스</p>
-      </div>
-      <button class="btn-ctrl btn-delete" style="padding:8px 12px; font-size:12px;" onclick="deleteSavedTrip('${trip.id}')">삭제</button>
-    `;
+    if (rank(trip) === 2) card.classList.add("is-past");
 
+    const start = getTripDate(trip, 1);
+    let when = `${trip.days}일 코스`;
+    if (start) {
+      const diff = Math.round((start - today) / 86400000);
+      const dday = diff > 0 ? `D-${diff}` : diff === 0 ? "D-DAY" : rank(trip) === 0 ? "여행 중" : "다녀옴";
+      when = `${formatShortDate(start)} 출발 · ${trip.days}일 · <strong class="dday">${dday}</strong>`;
+    }
+
+    card.innerHTML = `
+      <div class="saved-trip-info">
+        <h3>${esc(trip.title)}</h3>
+        <p>📍 ${esc(trip.destination)} | 📅 ${when}</p>
+        <p class="saved-trip-sub">${(trip.places || []).length}곳 · 1인 약 ₩${getTripTotal(trip).toLocaleString()}</p>
+      </div>
+      <button class="btn-ctrl btn-delete" style="padding:8px 12px; font-size:12px;">삭제</button>
+    `;
+    card.querySelector(".saved-trip-info").addEventListener("click", () => loadSavedTrip(trip.id));
+    card.querySelector(".btn-delete").addEventListener("click", () => deleteSavedTrip(trip.id));
     container.appendChild(card);
   });
 }
@@ -1713,130 +1890,21 @@ function renderSavedTrips() {
 window.loadSavedTrip = function(tripId) {
   const trip = state.savedTrips.find(t => t.id === tripId);
   if (!trip) return;
-
-  state.activeTrip = JSON.parse(JSON.stringify(trip)); // Clone
+  state.activeTrip = cloneTrip(trip);
   state.activeTripDay = 1;
-
   showItineraryView();
-  showToast("저장된 일정을 로드했습니다.");
 };
 
 window.deleteSavedTrip = function(tripId) {
   const index = state.savedTrips.findIndex(t => t.id === tripId);
-  if (index > -1) {
-    const title = state.savedTrips[index].title;
-    state.savedTrips.splice(index, 1);
-    saveToLocalStorage();
-    renderSavedTrips();
-    showToast(`"${title}" 일정이 삭제되었습니다.`);
-  }
+  if (index < 0) return;
+  const title = state.savedTrips[index].title;
+  if (!confirm(`"${title}" 일정을 삭제할까요?`)) return;
+  state.savedTrips.splice(index, 1);
+  saveToLocalStorage();
+  renderSavedTrips();
+  showToast(`"${title}" 일정이 삭제되었습니다.`);
 };
-
-// --- Admin KPI Dashboard Render ---
-function updateKpiStats() {
-  // Update CTR badge on Explore Tab
-  const ctrEl = document.getElementById("micro-ctr");
-  if (ctrEl) {
-    const ctr = state.kpi.generations > 0 
-      ? Math.round((state.kpi.clicks / state.kpi.generations) * 100) 
-      : 0;
-    ctrEl.textContent = `${ctr}%`;
-  }
-}
-
-function renderKpiDashboard() {
-  const genEl = document.getElementById("kpi-val-generations");
-  const saveEl = document.getElementById("kpi-val-saves");
-  const clickEl = document.getElementById("kpi-val-clicks");
-  const ctrEl = document.getElementById("kpi-val-ctr");
-  if (!genEl || !saveEl || !clickEl || !ctrEl) return;
-
-  // Update numbers
-  genEl.textContent = state.kpi.generations;
-  saveEl.textContent = state.kpi.saves;
-  clickEl.textContent = state.kpi.clicks;
-
-  const ctr = state.kpi.generations > 0 
-    ? Math.round((state.kpi.clicks / state.kpi.generations) * 100) 
-    : 0;
-  
-  ctrEl.textContent = `${ctr}%`;
-
-  // Draw SVG/CSS Chart
-  renderKpiChart();
-
-  // Render logs list
-  renderKpiLogs();
-}
-
-function renderKpiChart() {
-  const wrapper = document.getElementById("kpi-chart");
-  if (!wrapper) return;
-
-  wrapper.innerHTML = "";
-
-  // Simulate days
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Today"];
-  
-  // Calculate relative simulation values base on real clicks
-  const maxGenHeight = 80; // px limit
-  
-  // Generate mock generation heights slightly random but ending on real value
-  const baseGens = [4, 7, 3, 9, 12, 10, state.kpi.generations];
-  const baseClicks = [1, 2, 0, 3, 4, 3, state.kpi.clicks];
-
-  // Find max for scaling
-  const maxVal = Math.max(...baseGens, 10); // scale divisor
-
-  days.forEach((day, idx) => {
-    const gens = baseGens[idx];
-    const clicks = baseClicks[idx];
-
-    const genHeight = Math.round((gens / maxVal) * maxGenHeight) + 4;
-    const clickHeight = Math.round((clicks / maxVal) * maxGenHeight) + 4;
-
-    const col = document.createElement("div");
-    col.className = "chart-bar-col";
-    
-    col.innerHTML = `
-      <div class="chart-tooltip">생성: ${gens}회 | 클릭: ${clicks}회</div>
-      <div style="display:flex; gap:3px; align-items:flex-end;">
-        <div class="chart-bar" style="height:${genHeight}px;" title="일정 생성 수: ${gens}"></div>
-        <div class="chart-bar click-bar" style="height:${clickHeight}px;" title="예약 클릭 수: ${clicks}"></div>
-      </div>
-      <span class="chart-label">${day}</span>
-    `;
-
-    wrapper.appendChild(col);
-  });
-}
-
-function renderKpiLogs() {
-  const container = document.getElementById("kpi-logs-list");
-  if (!container) return;
-
-  container.innerHTML = "";
-
-  if (state.kpi.clickLogs.length === 0) {
-    container.innerHTML = `<p class="empty-logs">아직 예약 링크 클릭이 발생하지 않았습니다.</p>`;
-    return;
-  }
-
-  state.kpi.clickLogs.slice(0, 10).forEach(log => {
-    const item = document.createElement("div");
-    item.className = "log-item";
-    
-    let icon = "🎟️";
-    if (log.category === "hotel") icon = "🏨";
-    
-    item.innerHTML = `
-      <span class="time">${log.timestamp}</span>
-      ${icon} <strong>${log.placeName}</strong> 예약 이동 완료 (KPI 전환 연동)
-    `;
-    
-    container.appendChild(item);
-  });
-}
 
 // --- Senior Mode Setup & Management ---
 function setupSeniorMode() {
@@ -1940,61 +2008,6 @@ function applyFontSizeStep(toggleBtn, desktopToggleBtn, deviceWrapper, isInitial
   if (desktopToggleBtn) desktopToggleBtn.innerHTML = buttonText;
   if (!isInitial && toastMsg) showToast(toastMsg);
 
-  // Update Form elements dynamic state
-  updatePlannerFormForSeniorMode();
-}
-
-function updatePlannerFormForSeniorMode() {
-  const budgetSelect = document.getElementById("input-budget");
-  const styleTagsContainer = document.querySelector(".style-tags-container");
-  if (!budgetSelect || !styleTagsContainer) return;
-  
-  if (state.seniorMode) {
-    // Simplify budget selection
-    if (!budgetSelect.dataset.originalOptions) {
-      budgetSelect.dataset.originalOptions = budgetSelect.innerHTML;
-    }
-    budgetSelect.innerHTML = `
-      <option value="medium" selected>적당하게 (일반 예산)</option>
-    `;
-    
-    // Simplify style tags: keep relaxing & active, rename them, hide the others
-    if (!styleTagsContainer.dataset.originalHtml) {
-      styleTagsContainer.dataset.originalHtml = styleTagsContainer.innerHTML;
-    }
-    
-    styleTagsContainer.innerHTML = `
-      <span class="style-tag active" data-style="relaxing">🧘‍♀️ 편안한 휴양 여행</span>
-      <span class="style-tag" data-style="active">🎒 즐거운 관광 여행</span>
-    `;
-    
-    // Rebind click listeners to the new style tags
-    const newTags = styleTagsContainer.querySelectorAll(".style-tag");
-    newTags.forEach(tag => {
-      tag.addEventListener("click", () => {
-        newTags.forEach(t => t.classList.remove("active"));
-        tag.classList.add("active");
-      });
-    });
-  } else {
-    // Restore original budget options
-    if (budgetSelect.dataset.originalOptions) {
-      budgetSelect.innerHTML = budgetSelect.dataset.originalOptions;
-    }
-    // Restore original style tags
-    if (styleTagsContainer.dataset.originalHtml) {
-      styleTagsContainer.innerHTML = styleTagsContainer.dataset.originalHtml;
-      
-      // Rebind click listeners to restored style tags
-      const restoredTags = styleTagsContainer.querySelectorAll(".style-tag");
-      restoredTags.forEach(tag => {
-        tag.addEventListener("click", () => {
-          restoredTags.forEach(t => t.classList.remove("active"));
-          tag.classList.add("active");
-        });
-      });
-    }
-  }
 }
 
 // ==========================================
@@ -2092,7 +2105,7 @@ function setupConfirmationScreen() {
           category: 'custom'
         });
         inputCustom.value = "";
-        saveToLocalStorage();
+        persistActiveTrip();
         renderChecklist();
       }
     });
@@ -2108,7 +2121,7 @@ function setupConfirmationScreen() {
       if (state.activeTrip) {
         state.activeTrip.checklist = null;
         openChecklistModal();
-        saveToLocalStorage();
+        persistActiveTrip();
       }
     });
   }
@@ -2126,17 +2139,18 @@ function openPdfPreview() {
 
   let html = `
     <div style="font-family: sans-serif; padding: 20px; line-height: 1.6; color: #1e293b;">
-      <h2 style="margin-top: 0; color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">${state.activeTrip.title} 여행 일정</h2>
+      <h2 style="margin-top: 0; color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">${esc(state.activeTrip.title)}</h2>
       <div style="margin-bottom: 20px; background: #f8fafc; padding: 12px; border-radius: 8px; font-size: 14px;">
-        <p style="margin: 4px 0;"><strong>목적지:</strong> ${state.activeTrip.destination || '미정'}</p>
+        <p style="margin: 4px 0;"><strong>목적지:</strong> ${esc(state.activeTrip.destination || '미정')}</p>
         <p style="margin: 4px 0;"><strong>여행 기간:</strong> ${state.activeTrip.days}일</p>
-        <p style="margin: 4px 0;"><strong>여행 스타일:</strong> ${state.activeTrip.style === 'relaxing' ? '힐링/휴양' : '관광/활동'}</p>
+        ${state.activeTrip.startDate ? `<p style="margin: 4px 0;"><strong>출발일:</strong> ${esc(state.activeTrip.startDate)}</p>` : ''}
+        <p style="margin: 4px 0;"><strong>1인 예상 경비:</strong> ₩${getTripTotal(state.activeTrip).toLocaleString()}</p>
       </div>
   `;
 
   for (let d = 1; d <= state.activeTrip.days; d++) {
     const dayPlaces = state.activeTrip.places.filter(p => p.day === d);
-    html += `<h3 style="color: #0f172a; margin-top: 24px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px;">Day ${d}</h3>`;
+    html += `<h3 style="color: #0f172a; margin-top: 24px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px;">Day ${d}${getTripDate(state.activeTrip, d) ? ' · ' + formatShortDate(getTripDate(state.activeTrip, d)) : ''}</h3>`;
     if (dayPlaces.length === 0) {
       html += `<p style="color: #64748b; font-style: italic;">일정이 비어 있습니다.</p>`;
     } else {
@@ -2151,10 +2165,10 @@ function openPdfPreview() {
 
         html += `
           <li style="margin-bottom: 12px;">
-            <strong style="font-size: 16px;">[${place.time}] ${place.name}</strong> 
+            <strong style="font-size: 16px;">[${esc(place.time)}] ${esc(place.name)}</strong> 
             <span style="font-size: 12px; background: #e0e7ff; color: #4f46e5; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">${catText}</span>
             ${place.price ? `<span style="font-size: 13px; color: #b45309; font-weight: bold; margin-left: 8px;">₩${place.price.toLocaleString()}</span>` : ''}
-            ${place.description ? `<p style="margin: 4px 0 0 0; font-size: 13px; color: #475569;">${place.description}</p>` : ''}
+            ${place.description ? `<p style="margin: 4px 0 0 0; font-size: 13px; color: #475569;">${esc(place.description)}</p>` : ''}
           </li>
         `;
       });
@@ -2167,61 +2181,124 @@ function openPdfPreview() {
   overlay.classList.add("active");
 }
 
-function shareItinerary() {
+async function shareItinerary() {
   if (!state.activeTrip) return;
-  const dummyLink = `${window.location.origin}${window.location.pathname}?trip=${state.activeTrip.id}`;
-  
-  navigator.clipboard.writeText(dummyLink).then(() => {
-    showToast("공유 링크가 클립보드에 복사되었습니다!");
-  }).catch(err => {
-    console.error("클립보드 복사 실패: ", err);
-    showToast("공유 링크 복사에 실패했습니다. 직접 복사해주세요: " + dummyLink);
-  });
+  let url;
+  try {
+    const code = await window.RoutyAI.encodeTrip(state.activeTrip);
+    url = `${window.location.origin}${window.location.pathname}#trip=${code}`;
+  } catch (e) {
+    console.error(e);
+    showToast("공유 링크를 만들지 못했습니다.");
+    return;
+  }
+  const title = state.activeTrip.title;
+  if (navigator.share && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) {
+    try {
+      await navigator.share({ title: `[Routy] ${title}`, text: `${title} 여행 일정`, url });
+      return;
+    } catch (e) {
+      if (e.name === "AbortError") return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast("공유 링크를 복사했어요! 받은 사람은 링크만 열면 일정을 볼 수 있어요.", 3500);
+  } catch (err) {
+    prompt("아래 링크를 복사해 공유하세요.", url);
+  }
+}
+
+async function handleSharedLink() {
+  const m = window.location.hash.match(/^#trip=(.+)$/);
+  if (!m) return;
+  try {
+    const trip = await window.RoutyAI.decodeTrip(m[1]);
+    trip.source = "shared";
+    ensureTripShape(trip);
+    state.activeTrip = trip;
+    state.activeTripDay = 1;
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    showItineraryView();
+    showToast("공유받은 일정입니다. '저장'을 누르면 내 일정에 추가돼요.", 4000);
+  } catch (e) {
+    console.error(e);
+    showToast("공유 링크가 손상되어 일정을 열 수 없습니다.", 4000);
+  }
+}
+
+// 시간 문자열 "09:00 - 10:30" → [시작분, 종료분]
+function parseTimeRange(timeStr) {
+  const nums = (timeStr || "").match(/(\d{1,2}):(\d{2})/g);
+  if (!nums || !nums.length) return null;
+  const toMin = (s) => {
+    const [h, m] = s.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const start = toMin(nums[0]);
+  let end = nums[1] ? toMin(nums[1]) : start + 60;
+  if (end <= start) end = start + 60;
+  return [start, end];
 }
 
 function downloadCalendarIcs() {
   if (!state.activeTrip) return;
-  
-  let icsContent = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Routy//NONSGML Itinerary//EN\r\n";
-  
-  const today = new Date();
-  const formatIcsDate = (date) => {
-    return date.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-  };
-  
-  state.activeTrip.places.forEach((place, index) => {
-    const eventDate = new Date();
-    eventDate.setDate(today.getDate() + 1 + (place.day - 1));
-    
-    const [hours, minutes] = (place.time || "09:00").split(":").map(Number);
-    eventDate.setHours(hours, minutes, 0, 0);
-    
-    const endDate = new Date(eventDate);
-    endDate.setHours(eventDate.getHours() + 1);
-    
-    icsContent += "BEGIN:VEVENT\r\n";
-    icsContent += `UID:event_${place.id || index}@routy.com\r\n`;
-    icsContent += `DTSTAMP:${formatIcsDate(new Date())}\r\n`;
-    icsContent += `DTSTART:${formatIcsDate(eventDate)}\r\n`;
-    icsContent += `DTEND:${formatIcsDate(endDate)}\r\n`;
-    icsContent += `SUMMARY:[Routy] ${place.name}\r\n`;
-    icsContent += `DESCRIPTION:${(place.description || '').replace(/\n/g, '\\n')}\r\n`;
-    icsContent += "END:VEVENT\r\n";
+  const trip = state.activeTrip;
+  let base = getTripDate(trip, 1);
+  let noDate = false;
+  if (!base) {
+    base = new Date();
+    base.setDate(base.getDate() + 1);
+    base.setHours(0, 0, 0, 0);
+    noDate = true;
+  }
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmtLocal = (d) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
+  const fmtDate = (d) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const icsText = (s) => String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+  const now = new Date();
+  const stamp = now.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Routy//Itinerary//KO", "CALSCALE:GREGORIAN"];
+  trip.places.forEach((place, index) => {
+    const day = new Date(base);
+    day.setDate(base.getDate() + (place.day - 1));
+    const range = parseTimeRange(place.time);
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${trip.id}-${place.id || index}@routy`);
+    lines.push(`DTSTAMP:${stamp}`);
+    if (range) {
+      const s = new Date(day); s.setMinutes(range[0]);
+      const e = new Date(day); e.setMinutes(range[1]);
+      lines.push(`DTSTART:${fmtLocal(s)}`);
+      lines.push(`DTEND:${fmtLocal(e)}`);
+    } else {
+      const next = new Date(day); next.setDate(day.getDate() + 1);
+      lines.push(`DTSTART;VALUE=DATE:${fmtDate(day)}`);
+      lines.push(`DTEND;VALUE=DATE:${fmtDate(next)}`);
+    }
+    lines.push(`SUMMARY:${icsText(`${place.name}`)}`);
+    lines.push(`LOCATION:${icsText(place.name)}`);
+    if (!place.coordMissing) lines.push(`GEO:${(+place.lat).toFixed(6)};${(+place.lng).toFixed(6)}`);
+    lines.push(`DESCRIPTION:${icsText(`[${trip.title}] ${place.description || ""}`)}`);
+    lines.push("END:VEVENT");
   });
-  
-  icsContent += "END:VCALENDAR";
-  
-  const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
+  lines.push("END:VCALENDAR");
+
+  const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${state.activeTrip.title || 'trip'}_itinerary.ics`;
+  link.download = `${trip.title || "trip"}.ics`;
   document.body.appendChild(link);
   link.click();
-  document.body.removeChild(link);
+  link.remove();
   URL.revokeObjectURL(url);
-  
-  showToast("캘린더 .ics 파일이 다운로드되었습니다.");
+
+  showToast(noDate
+    ? "출발일이 없어 내일부터로 캘린더 파일을 만들었어요. 일정 화면 위쪽 📆에서 출발일을 지정할 수 있어요."
+    : "캘린더 파일(.ics)을 받았어요. 열면 캘린더에 추가됩니다.", 4000);
 }
 
 const DEFAULT_CHECKLIST_ITEMS = [
@@ -2242,7 +2319,7 @@ function openChecklistModal() {
     return;
   }
 
-  destInfo.textContent = `${state.activeTrip.destination || '선택한'} 여행을 위한 추천 준비물입니다.`;
+  destInfo.textContent = `${state.activeTrip.destination || '선택한'} 여행 준비물입니다. 체크 상태는 일정과 함께 저장돼요.`;
   
   if (!state.activeTrip.checklist) {
     state.activeTrip.checklist = JSON.parse(JSON.stringify(DEFAULT_CHECKLIST_ITEMS));
@@ -2263,6 +2340,9 @@ function openChecklistModal() {
     } else {
       state.activeTrip.checklist.push({ id: 'cdom1', text: '모바일 신분증', checked: false, category: 'domestic' });
     }
+    (state.activeTrip.checklistSeed || []).forEach((tip, i) => {
+      state.activeTrip.checklist.push({ id: 'cai' + i, text: `✨ ${tip}`, checked: false, category: 'ai' });
+    });
   }
 
   renderChecklist();
@@ -2310,7 +2390,7 @@ function renderChecklist() {
         label.style.textDecoration = "none";
         label.style.color = "inherit";
       }
-      saveToLocalStorage();
+      persistActiveTrip();
     });
 
     const spanText = document.createElement("span");
@@ -2330,7 +2410,7 @@ function renderChecklist() {
     btnDelete.style.fontSize = "14px";
     btnDelete.addEventListener("click", () => {
       state.activeTrip.checklist.splice(index, 1);
-      saveToLocalStorage();
+      persistActiveTrip();
       renderChecklist();
     });
 
@@ -2392,611 +2472,21 @@ function downloadOfflineTxt() {
   showToast("오프라인 일정 텍스트 파일이 다운로드되었습니다.");
 }
 
-function ensureTripCollaboratorsAndComments(trip) {
+// 예전 데이터(공동편집/댓글 필드 등)를 정리하고 필수 필드를 보장
+function ensureTripShape(trip) {
   if (!trip) return;
-  if (!trip.collaborators) {
-    trip.collaborators = ['jiwon@routy.com', 'minsu@routy.com'];
-  }
-  if (!trip.places) trip.places = [];
+  delete trip.collaborators;
+  if (!Array.isArray(trip.places)) trip.places = [];
+  if (!trip.days || trip.days < 1) trip.days = Math.max(1, ...trip.places.map(p => p.day || 1));
   trip.places.forEach(place => {
-    if (!place.id) {
-      place.id = 'p_' + Math.random().toString(36).substr(2, 9);
-    }
-    if (!place.comments) {
-      place.comments = [];
-      const hash = hashCode(place.name || '');
-      if (place.category === 'hotel') {
-        place.comments.push({
-          author: '이지원',
-          email: 'jiwon@routy.com',
-          text: '여기 평점이 진짜 좋더라구요! 근처 편의점도 가깝대요.',
-          time: '어제'
-        });
-      } else if (place.category === 'restaurant') {
-        if (hash % 2 === 0) {
-          place.comments.push({
-            author: '김민수',
-            email: 'minsu@routy.com',
-            text: '여기 웨이팅이 좀 길대요. 오픈런 해야할듯!',
-            time: '2일 전'
-          });
-        }
-      }
+    if (!place.id) place.id = 'p_' + Math.random().toString(36).slice(2, 11);
+    delete place.comments;
+    place.lat = parseFloat(place.lat);
+    place.lng = parseFloat(place.lng);
+    if (!isFinite(place.lat) || !isFinite(place.lng)) {
+      place.lat = 37.5665;
+      place.lng = 126.978;
+      place.coordMissing = true;
     }
   });
 }
-
-function renderCollaboratorsBar() {
-  const container = document.getElementById("itinerary-collab-avatars");
-  if (!container || !state.activeTrip) return;
-
-  container.innerHTML = "";
-
-  const youDiv = document.createElement("div");
-  youDiv.className = "collab-avatar me";
-  youDiv.textContent = state.user.loggedIn ? state.user.avatar || '👤' : '👤';
-  youDiv.title = `나 (${state.user.loggedIn ? state.user.name : '여행자'}) - 온라인`;
-  
-  const onlineBadgeMe = document.createElement("span");
-  onlineBadgeMe.className = "online-dot";
-  youDiv.appendChild(onlineBadgeMe);
-  container.appendChild(youDiv);
-
-  const collaborators = state.activeTrip.collaborators || [];
-  collaborators.forEach(email => {
-    const friend = state.friends.find(f => f.email === email);
-    if (!friend) return;
-
-    const friendDiv = document.createElement("div");
-    friendDiv.className = "collab-avatar";
-    
-    let avatar = '👤';
-    if (friend.name.includes("민수")) avatar = '👦';
-    else if (friend.name.includes("지원")) avatar = '👩';
-    else if (friend.name.includes("태양")) avatar = '👨';
-    else if (friend.name.includes("수아")) avatar = '👧';
-    else if (friend.name.includes("영희")) avatar = '👩';
-    else if (friend.name.includes("철수")) avatar = '👦';
-    
-    friendDiv.textContent = avatar;
-    friendDiv.title = `${friend.name} (${friend.email}) - ${friend.online ? '온라인' : '오프라인'}`;
-    
-    const onlineBadge = document.createElement("span");
-    onlineBadge.className = friend.online ? "online-dot" : "online-dot offline";
-    friendDiv.appendChild(onlineBadge);
-    
-    container.appendChild(friendDiv);
-  });
-}
-
-function setupCollaborationUI() {
-  const btnCollabInvite = document.getElementById("btn-collab-invite");
-  const overlayCollab = document.getElementById("collab-invite-modal-overlay");
-  const btnCloseCollab = document.getElementById("btn-close-collab-modal");
-  
-  const selectInvite = document.getElementById("collab-invite-select");
-  const btnSendCollab = document.getElementById("btn-send-collab-invite");
-  const btnTriggerSim = document.getElementById("btn-trigger-simulation");
-
-  if (btnCollabInvite) {
-    btnCollabInvite.addEventListener("click", () => {
-      openCollabModal();
-    });
-  }
-
-  if (btnCloseCollab) {
-    btnCloseCollab.addEventListener("click", () => {
-      if (overlayCollab) overlayCollab.classList.remove("active");
-    });
-  }
-
-  if (btnSendCollab) {
-    btnSendCollab.addEventListener("click", () => {
-      const email = selectInvite.value;
-      if (!email) {
-        showToast("초대할 친구를 선택해주세요.");
-        return;
-      }
-      
-      if (!state.activeTrip) return;
-      if (!state.activeTrip.collaborators) state.activeTrip.collaborators = [];
-      
-      if (state.activeTrip.collaborators.includes(email)) {
-        showToast("이미 이 일정에 참여 중인 친구입니다.");
-        return;
-      }
-      
-      state.activeTrip.collaborators.push(email);
-      saveToLocalStorage();
-      renderCollaboratorsBar();
-      openCollabModal();
-      showToast("친구를 일정에 초대했습니다.");
-      
-      const friendObj = state.friends.find(f => f.email === email);
-      if (friendObj) {
-        addCollabLog(`${friendObj.name}님이 일정에 참여했습니다.`);
-      }
-    });
-  }
-
-  if (btnTriggerSim) {
-    btnTriggerSim.addEventListener("click", () => {
-      simulateFriendActivity();
-    });
-  }
-
-  const commentForm = document.getElementById("comment-submit-form");
-  if (commentForm) {
-    commentForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      addPlaceComment();
-    });
-  }
-  
-  const btnCloseComments = document.getElementById("btn-close-comments-drawer");
-  if (btnCloseComments) {
-    btnCloseComments.addEventListener("click", () => {
-      closeCommentsDrawer();
-    });
-  }
-
-  const btnAddFriend = document.getElementById("btn-add-friend-action");
-  const inputAddFriendEmail = document.getElementById("friend-add-email");
-  
-  if (btnAddFriend && inputAddFriendEmail) {
-    btnAddFriend.addEventListener("click", () => {
-      const email = inputAddFriendEmail.value.trim();
-      if (!email) {
-        showToast("친구 이메일을 입력해주세요.");
-        return;
-      }
-      
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        showToast("올바른 이메일 형식이 아닙니다.");
-        return;
-      }
-
-      if (state.friends.some(f => f.email === email)) {
-        showToast("이미 친구 목록에 등록되어 있습니다.");
-        return;
-      }
-
-      const name = email.split('@')[0];
-      const newFriend = {
-        name: name,
-        email: email,
-        online: Math.random() > 0.3
-      };
-
-      state.friends.push(newFriend);
-      saveToLocalStorage();
-      renderProfileFriends();
-      inputAddFriendEmail.value = "";
-      showToast(`${name}님이 친구 목록에 추가되었습니다.`);
-    });
-    
-    inputAddFriendEmail.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        btnAddFriend.click();
-      }
-    });
-  }
-}
-
-function openCollabModal() {
-  const overlay = document.getElementById("collab-invite-modal-overlay");
-  const membersList = document.getElementById("collab-members-list");
-  const inviteSelect = document.getElementById("collab-invite-select");
-  
-  if (!overlay || !membersList || !inviteSelect || !state.activeTrip) return;
-
-  membersList.innerHTML = "";
-  
-  const meDiv = document.createElement("div");
-  meDiv.className = "collab-member-item";
-  meDiv.style.display = "flex";
-  meDiv.style.alignItems = "center";
-  meDiv.style.justifyContent = "space-between";
-  meDiv.style.padding = "8px 0";
-  meDiv.style.borderBottom = "1px solid #e2e8f0";
-  meDiv.innerHTML = `
-    <div style="display: flex; align-items: center; gap: 8px;">
-      <span>${state.user.loggedIn ? state.user.avatar || '👤' : '👤'}</span>
-      <strong>${state.user.loggedIn ? state.user.name : '나 (여행자)'}</strong>
-      <span style="font-size: 11px; background: #e2e8f0; padding: 2px 6px; border-radius: 99px;">방장</span>
-    </div>
-  `;
-  membersList.appendChild(meDiv);
-
-  const collaborators = state.activeTrip.collaborators || [];
-  collaborators.forEach(email => {
-    const friend = state.friends.find(f => f.email === email);
-    if (!friend) return;
-    
-    let avatar = '👤';
-    if (friend.name.includes("민수")) avatar = '👦';
-    else if (friend.name.includes("지원")) avatar = '👩';
-    else if (friend.name.includes("태양")) avatar = '👨';
-    else if (friend.name.includes("수아")) avatar = '👧';
-    else if (friend.name.includes("영희")) avatar = '👩';
-    else if (friend.name.includes("철수")) avatar = '👦';
-
-    const div = document.createElement("div");
-    div.className = "collab-member-item";
-    div.style.display = "flex";
-    div.style.alignItems = "center";
-    div.style.justifyContent = "space-between";
-    div.style.padding = "8px 0";
-    div.style.borderBottom = "1px solid #e2e8f0";
-    div.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <span>${avatar}</span>
-        <span>${friend.name} (${friend.email})</span>
-        <span style="width: 8px; height: 8px; border-radius: 50%; background: ${friend.online ? '#10b981' : '#94a3b8'};"></span>
-      </div>
-      <button class="btn btn-sm" style="background: none; border: none; color: #ef4444; cursor: pointer;" onclick="removeCollaborator('${email}')">제거</button>
-    `;
-    membersList.appendChild(div);
-  });
-
-  inviteSelect.innerHTML = `<option value="">초대할 친구 선택...</option>`;
-  state.friends.forEach(friend => {
-    if (!collaborators.includes(friend.email)) {
-      const option = document.createElement("option");
-      option.value = friend.email;
-      option.textContent = `${friend.name} (${friend.email})`;
-      inviteSelect.appendChild(option);
-    }
-  });
-
-  renderCollabLogs();
-  overlay.classList.add("active");
-}
-
-window.removeCollaborator = function(email) {
-  if (!state.activeTrip) return;
-  if (!state.activeTrip.collaborators) return;
-  
-  const index = state.activeTrip.collaborators.indexOf(email);
-  if (index > -1) {
-    state.activeTrip.collaborators.splice(index, 1);
-    saveToLocalStorage();
-    renderCollaboratorsBar();
-    openCollabModal();
-    showToast("참여자가 일정에서 제외되었습니다.");
-    
-    const friend = state.friends.find(f => f.email === email);
-    if (friend) {
-      addCollabLog(`${friend.name}님이 일정에서 제외되었습니다.`);
-    }
-  }
-};
-
-function renderCollabLogs() {
-  const logBox = document.getElementById("collab-log-box");
-  if (!logBox || !state.activeTrip) return;
-
-  if (!state.activeTrip.collabLogs) {
-    state.activeTrip.collabLogs = [
-      { text: "일정 공동 편집 세션이 시작되었습니다.", time: "방금 전" }
-    ];
-    
-    if (state.activeTrip.collaborators && state.activeTrip.collaborators.length > 0) {
-      const firstCollab = state.friends.find(f => f.email === state.activeTrip.collaborators[0]);
-      if (firstCollab) {
-        state.activeTrip.collabLogs.push({
-          text: `${firstCollab.name}님이 일정에 접속했습니다.`,
-          time: "1분 전"
-        });
-      }
-    }
-  }
-
-  logBox.innerHTML = "";
-  state.activeTrip.collabLogs.forEach(log => {
-    const p = document.createElement("p");
-    p.style.margin = "4px 0";
-    p.style.fontSize = "13px";
-    p.style.color = "var(--slate-600)";
-    p.innerHTML = `<span style="color: var(--slate-400); margin-right: 6px;">[${log.time}]</span>${log.text}`;
-    logBox.appendChild(p);
-  });
-  logBox.scrollTop = logBox.scrollHeight;
-}
-
-function addCollabLog(text) {
-  if (!state.activeTrip) return;
-  if (!state.activeTrip.collabLogs) state.activeTrip.collabLogs = [];
-  
-  const now = new Date();
-  const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-  
-  state.activeTrip.collabLogs.push({
-    text: text,
-    time: timeStr
-  });
-  
-  saveToLocalStorage();
-  renderCollabLogs();
-}
-
-function simulateFriendActivity() {
-  if (!state.activeTrip) return;
-
-  if (!state.activeTrip.collaborators) state.activeTrip.collaborators = [];
-  if (!state.activeTrip.collaborators.includes("minsu@routy.com")) {
-    state.activeTrip.collaborators.push("minsu@routy.com");
-    saveToLocalStorage();
-    renderCollaboratorsBar();
-  }
-
-  showToast("김민수님의 가상 협업 시뮬레이션이 시작되었습니다. (3초 뒤 자동 삽입)");
-  
-  const overlayCollab = document.getElementById("collab-invite-modal-overlay");
-  if (overlayCollab) overlayCollab.classList.remove("active");
-
-  addCollabLog("김민수님이 맛집 '하나 식당'을 14:00 슬롯에 추가 조율 중입니다...");
-
-  setTimeout(() => {
-    if (!state.activeTrip) return;
-
-    const currentDay = state.activeTripDay;
-    const newPlace = {
-      id: 'p_sim_' + Date.now(),
-      day: currentDay,
-      time: "14:00",
-      name: "하나 식당",
-      category: "restaurant",
-      description: "김민수 추천: 현지인들이 줄 서는 라멘 맛집! 꼭 가봐야 한대요.",
-      lat: 35.0062,
-      lng: 135.7709,
-      price: 15000,
-      comments: [
-        {
-          author: "김민수",
-          email: "minsu@routy.com",
-          text: "여기 간장 라멘이랑 가라아게 세트가 엄청 유명해요!!",
-          time: "방금 전"
-        }
-      ]
-    };
-
-    const existingPlaces = state.activeTrip.places.filter(p => p.day === currentDay);
-    if (existingPlaces.length > 0) {
-      newPlace.lat = existingPlaces[0].lat + (Math.random() - 0.5) * 0.01;
-      newPlace.lng = existingPlaces[0].lng + (Math.random() - 0.5) * 0.01;
-    } else {
-      newPlace.lat = 35.6895;
-      newPlace.lng = 139.6917;
-    }
-
-    const timeInMins = parseTimeToMinutes(newPlace.time);
-    let insertIndex = -1;
-    for (let i = 0; i < state.activeTrip.places.length; i++) {
-      const p = state.activeTrip.places[i];
-      if (parseTimeToMinutes(p.time) > timeInMins) {
-        insertIndex = i;
-        break;
-      }
-    }
-
-    if (insertIndex > -1) {
-      state.activeTrip.places.splice(insertIndex, 0, newPlace);
-    } else {
-      state.activeTrip.places.push(newPlace);
-    }
-
-    saveToLocalStorage();
-    renderTimeline();
-    updateMapMarkers();
-    
-    showToast("김민수님이 '하나 식당'을 일정에 추가했습니다!");
-    addCollabLog("김민수님이 '하나 식당'을 일정에 추가했습니다.");
-  }, 3000);
-}
-
-let activeCommentPlaceId = null;
-
-function openPlaceComments(placeId) {
-  if (!state.activeTrip) return;
-  
-  const place = state.activeTrip.places.find(p => p.id === placeId);
-  if (!place) return;
-
-  activeCommentPlaceId = placeId;
-  
-  const titleEl = document.getElementById("comments-drawer-title");
-  if (titleEl) {
-    titleEl.textContent = `📍 ${place.name} 한줄평`;
-  }
-
-  renderPlaceCommentsList();
-
-  const overlay = document.getElementById("place-comments-drawer-overlay");
-  if (overlay) {
-    overlay.classList.add("active");
-  }
-}
-
-function closeCommentsDrawer() {
-  const overlay = document.getElementById("place-comments-drawer-overlay");
-  if (overlay) {
-    overlay.classList.remove("active");
-  }
-  activeCommentPlaceId = null;
-}
-
-function renderPlaceCommentsList() {
-  const container = document.getElementById("comments-list-container");
-  if (!container || !state.activeTrip || !activeCommentPlaceId) return;
-
-  const place = state.activeTrip.places.find(p => p.id === activeCommentPlaceId);
-  if (!place) return;
-
-  container.innerHTML = "";
-
-  const comments = place.comments || [];
-  if (comments.length === 0) {
-    container.innerHTML = `<p style="text-align: center; color: var(--slate-400); margin-top: 40px; font-size: 14px;">아직 댓글이 없습니다.<br>의견을 남겨 첫 소통을 시작해보세요!</p>`;
-    return;
-  }
-
-  comments.forEach(comment => {
-    const bubble = document.createElement("div");
-    const isMe = state.user.loggedIn 
-      ? comment.email === state.user.email 
-      : comment.email === "me@routy.com" || comment.author === "나";
-    
-    bubble.className = isMe ? "comment-bubble me" : "comment-bubble other";
-    
-    bubble.style.display = "flex";
-    bubble.style.flexDirection = "column";
-    bubble.style.margin = "12px 0";
-    bubble.style.alignItems = isMe ? "flex-end" : "flex-start";
-
-    const authorSpan = document.createElement("span");
-    authorSpan.textContent = comment.author;
-    authorSpan.style.fontSize = "11px";
-    authorSpan.style.color = "var(--slate-500)";
-    authorSpan.style.marginBottom = "3px";
-    authorSpan.style.padding = "0 4px";
-
-    const contentDiv = document.createElement("div");
-    contentDiv.textContent = comment.text;
-    contentDiv.style.padding = "10px 14px";
-    contentDiv.style.borderRadius = "14px";
-    contentDiv.style.fontSize = "14px";
-    contentDiv.style.lineHeight = "1.4";
-    contentDiv.style.maxWidth = "75%";
-    
-    if (isMe) {
-      contentDiv.style.background = "var(--primary-gradient)";
-      contentDiv.style.color = "#ffffff";
-      contentDiv.style.borderTopRightRadius = "2px";
-    } else {
-      contentDiv.style.background = "var(--slate-100)";
-      contentDiv.style.color = "var(--slate-800)";
-      contentDiv.style.borderTopLeftRadius = "2px";
-    }
-
-    const timeSpan = document.createElement("span");
-    timeSpan.textContent = comment.time;
-    timeSpan.style.fontSize = "9px";
-    timeSpan.style.color = "var(--slate-400)";
-    timeSpan.style.marginTop = "2px";
-    timeSpan.style.padding = "0 4px";
-
-    bubble.appendChild(authorSpan);
-    bubble.appendChild(contentDiv);
-    bubble.appendChild(timeSpan);
-    container.appendChild(bubble);
-  });
-
-  container.scrollTop = container.scrollHeight;
-}
-
-function addPlaceComment() {
-  if (!state.activeTrip || !activeCommentPlaceId) return;
-
-  const place = state.activeTrip.places.find(p => p.id === activeCommentPlaceId);
-  if (!place) return;
-
-  const input = document.getElementById("comment-input");
-  if (!input) return;
-
-  const text = input.value.trim();
-  if (!text) return;
-
-  if (!place.comments) place.comments = [];
-
-  const author = state.user.loggedIn ? state.user.name : "나";
-  const email = state.user.loggedIn ? state.user.email : "me@routy.com";
-  
-  const now = new Date();
-  const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-  place.comments.push({
-    author: author,
-    email: email,
-    text: text,
-    time: timeStr
-  });
-
-  input.value = "";
-  saveToLocalStorage();
-  renderPlaceCommentsList();
-  renderTimeline();
-}
-
-function renderProfileFriends() {
-  const container = document.getElementById("profile-friends-list");
-  const countBadge = document.getElementById("friends-count-badge");
-  if (!container) return;
-
-  container.innerHTML = "";
-  const friends = state.friends || [];
-  
-  if (countBadge) {
-    countBadge.textContent = `${friends.length}명`;
-  }
-
-  if (friends.length === 0) {
-    container.innerHTML = `<p style="text-align: center; color: var(--slate-400); padding: 20px; font-size: 14px;">아직 추가된 친구가 없습니다.</p>`;
-    return;
-  }
-
-  friends.forEach(friend => {
-    const item = document.createElement("div");
-    item.className = "friend-item";
-    item.style.display = "flex";
-    item.style.alignItems = "center";
-    item.style.justifyContent = "space-between";
-    item.style.padding = "10px 12px";
-    item.style.background = "var(--glass-bg)";
-    item.style.border = "1px solid var(--border-color)";
-    item.style.borderRadius = "8px";
-    item.style.marginBottom = "8px";
-
-    let avatar = '👤';
-    if (friend.name.includes("민수")) avatar = '👦';
-    else if (friend.name.includes("지원")) avatar = '👩';
-    else if (friend.name.includes("태양")) avatar = '👨';
-    else if (friend.name.includes("수아")) avatar = '👧';
-    else if (friend.name.includes("영희")) avatar = '👩';
-    else if (friend.name.includes("철수")) avatar = '👦';
-
-    item.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 10px;">
-        <span style="font-size: 20px;">${avatar}</span>
-        <div style="display: flex; flex-direction: column;">
-          <strong style="font-size: 14px;">${friend.name}</strong>
-          <span style="font-size: 11px; color: var(--slate-500);">${friend.email}</span>
-        </div>
-        <span style="width: 8px; height: 8px; border-radius: 50%; background: ${friend.online ? '#10b981' : '#94a3b8'}; margin-left: 4px;" title="${friend.online ? '온라인' : '오프라인'}"></span>
-      </div>
-      <button class="btn btn-sm" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 13px;" onclick="removeFriend('${friend.email}')">삭제</button>
-    `;
-    container.appendChild(item);
-  });
-}
-
-window.removeFriend = function(email) {
-  const index = state.friends.findIndex(f => f.email === email);
-  if (index > -1) {
-    const friendName = state.friends[index].name;
-    state.friends.splice(index, 1);
-    saveToLocalStorage();
-    renderProfileFriends();
-    showToast(`${friendName}님이 친구 목록에서 삭제되었습니다.`);
-    
-    if (state.activeTrip && state.activeTrip.collaborators) {
-      const collabIndex = state.activeTrip.collaborators.indexOf(email);
-      if (collabIndex > -1) {
-        state.activeTrip.collaborators.splice(collabIndex, 1);
-        saveToLocalStorage();
-        renderCollaboratorsBar();
-      }
-    }
-  }
-};
