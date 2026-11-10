@@ -1,0 +1,616 @@
+/* =========================================================
+   Routy 레이아웃 (아이폰 · 아이패드 우선)
+   - 기본(폭 < 700px)      : 아이폰. 하단 탭바, 위 지도 / 아래 일정
+   - 700px 이상           : 아이패드 세로·mini·Split View. 하단 탭바, 넓은 콘텐츠
+   - 1000px 이상 & 높이 600+: 아이패드 가로. 왼쪽 사이드바, 일정 | 지도 2단
+   - 가로 & 높이 500 이하   : 아이폰 가로. 일정 | 지도 2단
+   ========================================================= */
+
+:root {
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --tabbar-h: 58px;
+  --header-h: 54px;
+  --content-max: 760px;
+  --touch: 40px;
+
+  /* 글자 크기 체계 */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+}
+
+@media (pointer: coarse) {
+  :root { --touch: 44px; }
+}
+
+html, body {
+  height: 100%;
+  height: 100dvh;
+}
+
+body {
+  display: block;
+  margin: 0;
+  overflow: hidden;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* iOS: 16px 미만 입력창은 포커스 시 자동 확대되므로 16px 고정 */
+input, select, textarea {
+  font-size: 16px !important;
+}
+
+/* ---------- 앱 셸 ---------- */
+#device-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  padding-left: var(--safe-l);
+  padding-right: var(--safe-r);
+  background-color: var(--bg-device);
+}
+
+#app-viewport {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.app-screen {
+  height: calc(100% - var(--tabbar-h) - var(--safe-b));
+}
+
+.app-header {
+  height: calc(var(--header-h) + var(--safe-t));
+  padding-top: var(--safe-t);
+  gap: 8px;
+}
+
+.app-header h2 {
+  font-size: var(--fs-lg);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-header.has-back h2 { text-align: center; }
+
+.header-actions,
+.header-actions-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.icon-btn,
+.header-btn,
+.back-btn {
+  width: var(--touch);
+  height: var(--touch);
+  min-width: var(--touch);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  padding: 0;
+  font-size: 0;
+}
+
+.header-btn {
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  border-radius: 50%;
+}
+
+.icon-btn:active, .header-btn:active { background: var(--primary-light); }
+
+.btn-header-senior {
+  height: var(--touch);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  font-size: var(--fs-sm);
+}
+
+.header-action-btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 17px;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.header-action-btn.is-saved {
+  background: transparent !important;
+  color: var(--text-muted) !important;
+  box-shadow: none !important;
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+.logo-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: url("icon.svg") center / contain no-repeat;
+  flex-shrink: 0;
+}
+
+.logo-text { font-size: 19px; font-weight: 800; }
+
+/* ---------- 하단 탭바 ---------- */
+#bottom-nav {
+  height: calc(var(--tabbar-h) + var(--safe-b));
+  padding-bottom: var(--safe-b);
+  align-items: stretch;
+}
+
+.nav-item {
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 0 4px;
+  min-height: var(--tabbar-h);
+}
+
+.nav-item.active { transform: none; }
+.nav-item .nav-icon { display: flex; line-height: 0; }
+.nav-item .nav-label { font-size: 11px; font-weight: 600; }
+
+/* ---------- 사이드바 (기본: 숨김) ---------- */
+#desktop-header { display: none; }
+
+/* ---------- 토스트: 상단 알림 ---------- */
+.toast-banner {
+  position: fixed;
+  top: calc(var(--safe-t) + var(--header-h) + 10px);
+  bottom: auto;
+  left: 50%;
+  transform: translateX(-50%) translateY(-16px);
+  max-width: min(92vw, 520px);
+  width: max-content;
+  white-space: normal;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  padding: 11px 18px;
+  border-radius: 14px;
+  z-index: 6000;
+}
+
+.toast-banner.active { transform: translateX(-50%) translateY(0); }
+
+/* ---------- 공통 콘텐츠 ---------- */
+.screen-content {
+  padding: 16px max(16px, calc((100% - var(--content-max)) / 2)) 32px;
+}
+
+.section-title h2 { font-size: var(--fs-lg); }
+.template-card h3 { font-size: var(--fs-lg); }
+.template-desc-single { font-size: var(--fs-sm); line-height: 1.5; }
+.search-icon { display: inline-flex; color: var(--text-muted); }
+
+/* ---------- 일정 화면 ---------- */
+#screen-itinerary .app-header { position: relative; }
+
+.itinerary-split-container {
+  height: calc(100% - var(--header-h) - var(--safe-t));
+  flex-direction: column;
+}
+
+#map-wrapper {
+  height: 32%;
+  min-height: 170px;
+  flex-shrink: 0;
+}
+
+.itinerary-details-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px max(16px, calc((100% - var(--content-max)) / 2)) 0;
+  position: relative;
+}
+
+.map-controls {
+  font-size: var(--fs-xs);
+  padding: 6px 12px;
+}
+
+/* 일정 메타 */
+.trip-meta-line {
+  font-size: var(--fs-sm);
+  gap: 6px 10px;
+}
+
+.trip-meta-line .meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.trip-meta-line .meta-budget { color: var(--primary-solid); font-weight: 800; }
+[data-theme="dark"] .trip-meta-line .meta-budget { color: #a5b4fc; }
+
+.trip-summary { font-size: var(--fs-sm); }
+
+.trip-date-picker input {
+  font-size: 15px !important;
+  height: 34px;
+  padding: 0 8px;
+}
+
+/* Day 탭: 스크롤해도 위에 고정 */
+.day-tabs-sticky {
+  position: sticky;
+  top: -14px;
+  z-index: 6;
+  margin: 10px calc(-1 * max(16px, calc((100vw - var(--content-max)) / 2))) 6px;
+  padding: 8px max(16px, calc((100vw - var(--content-max)) / 2)) 4px;
+  background: var(--bg-device);
+}
+
+.day-tabs-slider { margin-bottom: 0; padding: 2px 2px 8px; }
+
+.day-tab {
+  min-height: var(--touch);
+  padding: 6px 16px;
+  font-size: var(--fs-sm);
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  line-height: 1.2;
+}
+
+.day-tab.is-today:not(.active) { border-color: var(--primary-solid); color: var(--primary-solid); }
+
+/* 다음 일정 카드 */
+.next-up-card:empty { display: none; }
+.next-up-card {
+  margin: 4px 0 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--primary-gradient);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.25);
+}
+.next-up-card .nu-body { flex: 1; min-width: 0; }
+.next-up-card .nu-label { font-size: var(--fs-xs); font-weight: 700; opacity: 0.85; }
+.next-up-card .nu-name { font-size: var(--fs-lg); font-weight: 800; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.next-up-card .nu-time { font-size: var(--fs-sm); opacity: 0.9; margin-top: 2px; }
+.next-up-card .nu-go {
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 22px;
+  border: none;
+  background: #fff;
+  color: var(--primary-solid);
+  font-weight: 800;
+  font-size: var(--fs-md);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+/* 타임라인 카드 */
+.timeline-item {
+  padding: 12px 0 14px;
+  gap: 6px;
+  border-radius: 12px;
+  transition: background-color 0.4s;
+}
+
+.timeline-item.is-focused { background-color: var(--primary-light); }
+.timeline-item.is-next .timeline-dot { box-shadow: 0 0 0 5px var(--primary-light); }
+
+.timeline-item-header {
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  font-size: var(--fs-md);
+}
+
+.timeline-time {
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-basis: 100%;
+}
+
+.timeline-title-sep { display: none; }
+
+.timeline-place-name {
+  font-size: var(--fs-lg);
+  line-height: 1.35;
+  flex: 1;
+  min-width: 0;
+}
+
+.place-price-tag { font-size: var(--fs-xs); padding: 3px 8px; border-radius: 8px; }
+
+.timeline-desc {
+  font-size: 14px;
+  line-height: 1.55;
+  margin-top: 0;
+}
+
+.timeline-actions {
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.chip-btn {
+  min-height: var(--touch);
+  padding: 0 14px;
+  border-radius: calc(var(--touch) / 2);
+  border: 1px solid var(--border-color);
+  background: var(--card-bg-solid);
+  color: var(--text-color);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.chip-btn .ic { color: var(--text-muted); }
+.chip-btn:active { background: var(--primary-light); }
+.chip-btn.chip-primary { color: var(--primary-solid); border-color: rgba(99, 102, 241, 0.35); }
+.chip-btn.chip-primary .ic { color: var(--primary-solid); }
+.chip-btn.chip-icon { width: var(--touch); padding: 0; justify-content: center; }
+.chip-btn.chip-danger { color: var(--danger-color, #ef4444); border-color: rgba(239, 68, 68, 0.35); }
+.chip-btn:disabled { opacity: 0.3; }
+
+.edit-only-actions { gap: 8px; }
+
+/* 장소 추가 */
+.add-place-trigger {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 0 12px;
+  font-size: var(--fs-md);
+}
+.add-place-trigger.hidden { display: none; }
+
+/* AI 수정 요청: 목록 하단에 고정 */
+.refine-spacer { height: 8px; }
+
+.ai-refine-box {
+  position: sticky;
+  bottom: 0;
+  z-index: 7;
+  margin: 0 calc(-1 * max(16px, calc((100vw - var(--content-max)) / 2)));
+  padding: 10px max(16px, calc((100vw - var(--content-max)) / 2)) calc(10px + 0px);
+  background: var(--nav-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-top: 1px solid var(--border-color);
+  align-items: center;
+  gap: 8px;
+}
+.ai-refine-box .refine-icon { color: var(--primary-solid); display: flex; }
+.ai-refine-box input { height: 44px; border-radius: 22px; padding: 0 16px; }
+.ai-refine-box .btn { height: 44px; border-radius: 22px; padding: 0 18px; }
+
+/* 더보기 메뉴 */
+.trip-menu {
+  position: absolute;
+  top: calc(100% - 4px);
+  right: 10px;
+  min-width: 220px;
+  background: var(--card-bg-solid);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+  padding: 6px;
+  z-index: 3000;
+  display: none;
+}
+.trip-menu.open { display: block; }
+.trip-menu button {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border: none;
+  background: none;
+  color: var(--text-color);
+  font-size: var(--fs-md);
+  font-family: inherit;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.trip-menu button .ic { color: var(--text-muted); }
+.trip-menu button:active, .trip-menu button:hover { background: var(--primary-light); }
+.trip-menu button.on { color: var(--primary-solid); font-weight: 700; }
+.trip-menu hr { border: none; border-top: 1px solid var(--border-color); margin: 4px 6px; }
+
+/* 큰글씨 모드: 지도 토글 버튼 */
+.senior-map-toggle-btn { min-height: 48px; }
+
+/* 모달: 하단 safe-area */
+.modal-overlay { padding-bottom: var(--safe-b); }
+
+/* 설정·내 일정 */
+.saved-trips-list,
+#screen-profile .settings-card { max-width: var(--content-max); margin-left: auto; margin-right: auto; }
+.saved-trip-item { min-height: 72px; }
+.saved-trip-item .btn-delete { min-height: var(--touch); }
+.saved-trip-info h3 { font-size: var(--fs-lg); }
+.saved-trip-info p { font-size: var(--fs-sm); }
+
+.btn { min-height: var(--touch); }
+.btn-sm { min-height: 40px; }
+
+/* =========================================================
+   700px 이상: 아이패드 세로 / mini / Split View
+   ========================================================= */
+@media (min-width: 700px) {
+  :root {
+    --tabbar-h: 64px;
+    --header-h: 60px;
+    --fs-md: 16px;
+    --fs-lg: 18px;
+  }
+
+  .nav-item { flex-direction: row; gap: 8px; flex: 0 1 180px; }
+  #bottom-nav { justify-content: center; gap: 8px; }
+  .nav-item .nav-label { font-size: 14px; }
+
+  #screen-explore .search-section { text-align: center; max-width: 620px; margin: 16px auto 32px; }
+  #screen-explore .search-section h1 { font-size: var(--fs-2xl); }
+  .template-list { display: grid !important; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .template-card { margin: 0 !important; }
+
+  #planner-form {
+    padding: 28px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    margin-top: 8px;
+  }
+
+  #map-wrapper { height: 38%; }
+
+  .timeline-desc { font-size: 15px; }
+}
+
+/* =========================================================
+   1000px 이상 & 충분한 높이: 아이패드 가로 / 데스크톱
+   ========================================================= */
+@media (min-width: 1000px) and (min-height: 600px) {
+  :root { --content-max: 880px; }
+
+  #device-wrapper { flex-direction: row; }
+
+  #bottom-nav { display: none !important; }
+  .app-screen { height: 100%; }
+
+  #desktop-header {
+    display: flex;
+    flex-direction: column;
+    width: 248px;
+    flex-shrink: 0;
+    padding: calc(var(--safe-t) + 18px) 14px calc(var(--safe-b) + 16px);
+    border-right: 1px solid var(--border-color);
+    background: var(--nav-bg);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    gap: 18px;
+    z-index: 50;
+  }
+
+  #desktop-header .logo-wrapper { padding: 0 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+
+  #desktop-header .desktop-nav { display: flex; flex-direction: column; gap: 2px; }
+
+  #desktop-header .desktop-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 46px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 12px;
+    background: none;
+    color: var(--text-color);
+    font-size: 16px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  #desktop-header .desktop-nav-item .ic { color: var(--text-muted); }
+  #desktop-header .desktop-nav-item.active { background: var(--primary-light); color: var(--primary-solid); }
+  #desktop-header .desktop-nav-item.active .ic { color: var(--primary-solid); }
+
+  .sidebar-trips { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .sidebar-trips:empty { display: none; }
+  .sidebar-trips h4 { font-size: 12px; color: var(--text-muted); font-weight: 700; padding: 6px 12px; }
+  .sidebar-trip {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 9px 12px; border-radius: 12px; border: none; background: none;
+    text-align: left; cursor: pointer; color: var(--text-color); font-family: inherit;
+  }
+  .sidebar-trip strong { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sidebar-trip span { font-size: 12px; color: var(--text-muted); }
+  .sidebar-trip.active { background: var(--primary-light); }
+  .sidebar-trip.active strong { color: var(--primary-solid); }
+
+  #desktop-header .desktop-header-actions { display: flex; gap: 8px; padding: 0 4px; margin-top: auto; }
+
+  /* 사이드바에 로고·글자크기·테마가 있으므로 탐색 화면 상단 바는 숨김 */
+  #screen-explore .app-header { display: none; }
+  #screen-explore .screen-content { padding-top: 32px; }
+  .template-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+
+  /* 일정: 목록 | 지도 */
+  .itinerary-split-container { flex-direction: row-reverse; }
+  #map-wrapper { height: 100% !important; width: auto; flex: 1; min-height: 0; border-bottom: none; border-left: 1px solid var(--border-color); }
+  .itinerary-details-wrapper { flex: 0 0 min(460px, 45%); padding: 16px 20px 0; }
+  .day-tabs-sticky { margin: 10px -20px 6px; padding: 8px 20px 4px; }
+  .ai-refine-box { margin: 0 -20px; padding: 10px 20px; }
+
+  /* 큰글씨 모드여도 넓은 화면에서는 지도 표시 */
+  .senior-mode #map-wrapper { display: block !important; }
+  #btn-toggle-map { display: none !important; }
+}
+
+/* =========================================================
+   아이폰 가로 (낮은 높이)
+   ========================================================= */
+@media (orientation: landscape) and (max-height: 500px) {
+  :root { --header-h: 46px; --tabbar-h: 48px; }
+  .nav-item { flex-direction: row; gap: 6px; }
+  .itinerary-split-container { flex-direction: row-reverse; }
+  #map-wrapper { height: 100% !important; width: auto; flex: 1; min-height: 0; border-bottom: none; border-left: 1px solid var(--border-color); }
+  .itinerary-details-wrapper { flex: 0 0 55%; padding: 10px 14px 0; }
+  .day-tabs-sticky { margin: 6px -14px 4px; padding: 6px 14px 2px; }
+  .ai-refine-box { margin: 0 -14px; padding: 8px 14px; }
+  .next-up-card { padding: 10px 12px; margin-bottom: 8px; }
+  .next-up-card .nu-time, .trip-summary { display: none; }
+  .day-tabs-sticky { position: static; }
+  .ai-refine-box { position: static; margin-top: 8px; }
+}
+
+@media print {
+  #desktop-header, #bottom-nav, .trip-menu, .next-up-card, .chip-btn { display: none !important; }
+}
+
+/* 폼·설정은 너무 넓어지지 않게 */
+#planner-form { max-width: 720px; margin-left: auto; margin-right: auto; }
