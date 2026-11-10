@@ -3950,3 +3950,156 @@ body {
   }
 }
 
+
+/* =========================================================
+   v2: 개인용 고도화 (AI 연결, 설정, 장소 편집, 공유)
+   ========================================================= */
+.label-hint { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+
+.ai-key-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  border-radius: var(--radius-md, 14px);
+  background: var(--primary-light);
+  border: 1px dashed var(--primary-solid);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ai-key-notice strong { color: var(--primary-solid); }
+
+.loading-elapsed { font-size: 12px; color: var(--text-muted); margin: 6px 0 14px; min-height: 16px; }
+
+/* 일정 메타 & 도구 */
+.trip-meta-row { margin: 4px 0 10px; }
+.trip-meta-line {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-muted); font-weight: 600;
+}
+.trip-summary { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-top: 6px; }
+.trip-date-picker { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.trip-date-picker input {
+  border: 1px solid var(--border-color); background: var(--card-bg-solid); color: var(--text-color);
+  border-radius: 8px; padding: 3px 6px; font-size: 12px; font-family: inherit;
+}
+.trip-source-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+.trip-source-badge.ai { background: var(--primary-light); color: var(--primary-solid); }
+.trip-source-badge.sample { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.trip-source-badge.shared { background: rgba(16, 185, 129, 0.15); color: #047857; }
+
+.trip-tools-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+.trip-tool-btn {
+  border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color);
+  border-radius: 10px; padding: 8px 4px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.trip-tool-btn:hover { border-color: var(--primary-solid); color: var(--primary-solid); }
+
+.ai-refine-box { display: flex; gap: 6px; margin-bottom: 12px; }
+.ai-refine-box input {
+  flex: 1; min-width: 0; border: 1px solid var(--border-color); background: var(--card-bg-solid);
+  color: var(--text-color); border-radius: 10px; padding: 9px 12px; font-size: 13px; font-family: inherit;
+}
+.ai-refine-box input:focus { outline: none; border-color: var(--primary-solid); }
+.ai-refine-box.loading input { opacity: 0.6; }
+.ai-refine-box .btn { white-space: nowrap; }
+.ai-refine-box .btn-undo { background: #f59e0b; }
+
+.day-tab-date { display: block; font-size: 10px; font-weight: 500; opacity: 0.8; margin-top: 1px; }
+.day-summary-line { font-size: 11px; color: var(--text-muted); font-weight: 600; margin: 0 0 10px; }
+
+/* 타임라인 버튼 */
+.timeline-actions { flex-wrap: wrap; row-gap: 4px; }
+.edit-only-actions { display: none; align-items: center; gap: 6px; }
+.edit-mode-active .edit-only-actions { display: inline-flex; }
+.btn-move {
+  border: 1px solid var(--border-color); background: var(--card-bg-solid); color: var(--text-color);
+  width: 24px; height: 22px; border-radius: 6px; font-size: 10px; cursor: pointer; padding: 0;
+}
+.btn-move:disabled { opacity: 0.3; cursor: default; }
+.coord-warn { font-size: 11px; cursor: help; }
+.transit-tip { font-style: italic; }
+.click-guide { font-size: 14px; color: var(--primary-solid); font-weight: bold; margin-top: 4px; user-select: none; }
+.btn-senior-link, .btn-senior-edit { background-color: var(--primary-light) !important; color: var(--primary-solid) !important; border: none !important; }
+
+/* 장소 검색 */
+.place-search-row { display: flex; gap: 6px; }
+.place-search-row input { flex: 1; min-width: 0; }
+.place-search-row .btn { white-space: nowrap; }
+.place-search-results { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; max-height: 200px; overflow-y: auto; }
+.place-search-results:empty { display: none; }
+.place-search-item {
+  text-align: left; border: 1px solid var(--border-color); background: var(--card-bg-solid); color: var(--text-color);
+  border-radius: 8px; padding: 8px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; font-family: inherit;
+}
+.place-search-item:hover { border-color: var(--primary-solid); }
+.place-search-item strong { font-size: 13px; }
+.place-search-item span { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-search-msg { font-size: 12px; color: var(--text-muted); padding: 6px 2px; }
+.place-search-picked { font-size: 12px; color: #047857; margin-top: 6px; line-height: 1.4; }
+.place-search-picked:empty { display: none; }
+.link-btn { background: none; border: none; color: var(--danger-color, #ef4444); text-decoration: underline; cursor: pointer; font-size: 12px; padding: 0 2px; }
+
+/* 장소 편집 모달 */
+.place-edit-modal {
+  background: var(--card-bg-solid); color: var(--text-color);
+  width: min(92%, 440px); max-height: 88vh; overflow-y: auto;
+  border-radius: 20px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+.place-edit-body { padding: 4px 20px 8px; }
+.place-edit-body .form-row { display: flex; gap: 10px; }
+.place-edit-body .col { flex: 1; min-width: 0; }
+
+/* 설정 */
+.settings-card {
+  background: var(--card-bg); border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 14px); padding: 18px; margin-bottom: 14px;
+}
+.settings-card h3 { font-size: 15px; margin-bottom: 8px; }
+.settings-desc { font-size: 12px; color: var(--text-muted); line-height: 1.55; margin-bottom: 12px; }
+.settings-desc a { color: var(--primary-solid); font-weight: 600; }
+.settings-hint { display: block; font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.key-input-row { display: flex; gap: 6px; }
+.key-input-row input { flex: 1; min-width: 0; font-family: monospace; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.settings-status { font-size: 12px; margin-top: 10px; min-height: 16px; color: var(--text-muted); }
+.settings-status.ok { color: #047857; }
+.settings-status.error { color: var(--danger-color, #ef4444); }
+.settings-stats { display: flex; gap: 16px; font-size: 13px; margin-bottom: 6px; }
+
+/* 내 일정 목록 */
+.saved-trip-sub { font-size: 11px; color: var(--text-muted); }
+.saved-trip-item .dday { color: var(--primary-solid); }
+.saved-trip-item.is-past { opacity: 0.65; }
+
+#btn-save-itinerary.is-saved { opacity: 0.85; }
+
+@media print {
+  .place-edit-modal, .ai-refine-box, .trip-tools-row { display: none !important; }
+}
+
+/* 공통 컨트롤 버튼 (내 일정 삭제, 큰글씨 상세 모달) */
+.btn-ctrl {
+  border: 1px solid var(--border-color);
+  background: var(--card-bg-solid);
+  color: var(--text-color);
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+}
+.btn-ctrl.btn-delete {
+  border-color: var(--danger-color, #ef4444);
+  color: var(--danger-color, #ef4444);
+  background-color: var(--danger-light, rgba(239, 68, 68, 0.08));
+}
+.senior-modal-controls .btn-ctrl {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  font-size: 18px;
+  font-weight: 800;
+  text-align: center;
+}
