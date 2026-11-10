@@ -1,10 +1,24 @@
 // Routy service worker: 앱 파일은 네트워크 우선(최신 유지) + 오프라인 시 캐시,
 // 지도 타일·폰트·Leaflet 등 외부 정적 리소스는 캐시 우선. AI/장소검색 API는 캐시하지 않음.
-const VERSION = "routy-v3-1";
-const APP_SHELL = ["./", "index.html", "styles.css", "layout.css", "icons.js", "app.js", "ai.js", "templates.js", "manifest.json", "icon.svg", "icon-192.png"];
+const VERSION = "routy-v4-1";
+const APP_SHELL = ["./", "index.html", "styles.css", "layout.css", "icons.js", "ui.js", "app.js", "ai.js", "templates.js", "manifest.json", "icon.svg", "icon-192.png"];
+
+// 지도 라이브러리도 설치 시점에 미리 받아 둠 (첫 실행 직후 오프라인 대비)
+const EXTERNAL = [
+  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
+  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(VERSION).then(c => c.addAll(APP_SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const c = await caches.open(VERSION);
+    await c.addAll(APP_SHELL);
+    const ext = await caches.open(VERSION + "-ext");
+    await Promise.all(EXTERNAL.map(u =>
+      fetch(u, { mode: "cors" }).then(r => r.ok && ext.put(u, r)).catch(() => {})
+    ));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
