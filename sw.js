@@ -1,7 +1,7 @@
 // Routy service worker: 앱 파일은 네트워크 우선(최신 유지) + 오프라인 시 캐시,
 // 지도 타일·폰트·Leaflet 등 외부 정적 리소스는 캐시 우선. AI/장소검색 API는 캐시하지 않음.
-const VERSION = "routy-v2-1";
-const APP_SHELL = ["./", "index.html", "styles.css", "app.js", "ai.js", "templates.js", "manifest.json", "icon.svg", "icon-192.png"];
+const VERSION = "routy-v3-1";
+const APP_SHELL = ["./", "index.html", "styles.css", "layout.css", "icons.js", "app.js", "ai.js", "templates.js", "manifest.json", "icon.svg", "icon-192.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(VERSION).then(c => c.addAll(APP_SHELL)).then(() => self.skipWaiting()));
