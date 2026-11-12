@@ -52,19 +52,22 @@
     {
       "day": 1,
       "time": "09:00 - 10:30",
-      "name": "실제 장소의 정확한 이름 (현지에서 검색 가능한 이름)",
+      "name": "장소 이름 (한국어 표기)",
+      "searchName": "지도에서 검색할 현지어 또는 영어 공식 이름 (예: Ichiran Honten)",
       "category": "sightseeing | restaurant | cafe | shopping | hotel | transit 중 하나",
       "lat": 35.0,
       "lng": 135.0,
       "description": "무엇을 하는지, 팁, 이동 방법 등 1~2문장 (한국어)",
-      "price": 15000
+      "price": 15000,
+      "priceUnit": "person 또는 group"
     }
   ],
   "tips": ["이 여행에 맞는 준비물/주의사항 3~6개 (짧게)"]
 }
 규칙:
 - 실제로 존재하는 장소만 사용하고, lat/lng는 그 장소의 실제 좌표(소수점 4자리 이상)로 적으세요.
-- price는 1인 기준 예상 비용을 원화(KRW) 정수로. 무료면 0.
+- price는 원화(KRW) 정수. 입장료·식사처럼 사람마다 내는 비용은 priceUnit "person"(1인 기준),
+  숙소(1박 객실 요금)·택시·렌터카처럼 일행이 함께 내는 비용은 priceUnit "group"(일행 전체 금액). 무료면 0.
 - time은 24시간제 "HH:MM - HH:MM" 형식. 하루 일정은 시간 순서대로.
 - 하루에 4~7곳. 이동 동선이 짧도록 가까운 곳끼리 묶으세요.
 - 숙박이 있는 날(마지막 날 제외)은 그날 마지막에 숙소(category "hotel")를 넣으세요.
@@ -77,7 +80,7 @@
       `- 목적지: ${input.destination}`,
       `- 기간: ${input.days}일${input.days > 1 ? ` (${input.days - 1}박 ${input.days}일)` : " (당일치기)"}`,
       input.startDate ? `- 출발일: ${input.startDate} (계절/요일/휴무일을 고려하세요)` : "",
-      input.party ? `- 동행: ${input.party}` : "",
+      input.party ? `- 동행: ${input.party}${input.people ? ` (총 ${input.people}명)` : ""}` : "",
       `- 예산: ${BUDGET_LABELS[input.budget] || "보통"}`,
       `- 선호 스타일: ${styles}`,
       input.request ? `- 추가 요청: ${input.request}` : "",
@@ -86,27 +89,60 @@
     return lines.filter(Boolean).join("\n");
   }
 
-  function buildRefinePrompt(trip, instruction) {
+  function buildRefinePrompt(trip, instruction, day) {
     const slim = {
       title: trip.title,
       destination: trip.destination,
       days: trip.days,
+      people: trip.people || null,
       startDate: trip.startDate || null,
       places: trip.places.map(p => ({
-        day: p.day, time: p.time, name: p.name, category: p.category,
-        lat: p.lat, lng: p.lng, description: p.description, price: p.price
+        day: p.day, time: p.time, name: p.name, searchName: p.searchName, category: p.category,
+        lat: p.lat, lng: p.lng, description: p.description, price: p.price, priceUnit: p.priceUnit
       }))
     };
+    const scope = day
+      ? [
+          `이번 요청은 Day ${day}에만 적용합니다. places에는 Day ${day}의 장소만 넣어 출력하세요 (day 값은 모두 ${day}).`,
+          "다른 날의 장소와 겹치지 않게 하고, 요청과 관계없는 Day 장소는 최대한 그대로 유지하세요."
+        ]
+      : [
+          "요청을 반영해 수정된 전체 일정을 다시 출력하세요. 요청과 관계없는 부분은 최대한 그대로 유지하세요.",
+          `현재 일수는 ${trip.days}일입니다. 요청이 일수 변경을 원하면 places의 day 값으로 반영하세요.`
+        ];
     return [
       "당신은 한국인 여행자를 위한 전문 여행 플래너입니다. 아래는 현재 여행 일정(JSON)입니다.",
       JSON.stringify(slim),
       "",
       `사용자 요청: ${instruction}`,
       "",
-      "요청을 반영해 수정된 전체 일정을 다시 출력하세요. 요청과 관계없는 부분은 최대한 그대로 유지하세요.",
-      `일수(days)는 ${trip.days}일입니다. 요청이 일수 변경을 원하면 places의 day 값으로 반영하세요.`,
+      ...scope,
       OUTPUT_SPEC
     ].join("\n");
+  }
+
+  // "오후 2시~4시", "9:00-10:30" 등을 "HH:MM - HH:MM" 형식으로
+  function normalizeTime(raw) {
+    const s0 = String(raw || "").trim();
+    if (!s0) return s0;
+    const parts = s0.split(/\s*(?:-|~|–|—|부터|to)\s*/i).filter(Boolean).slice(0, 2);
+    const out = [];
+    let prevPM = false;
+    for (const part of parts) {
+      const nums = part.match(/\d{1,2}/g);
+      if (!nums) return s0;
+      let h = parseInt(nums[0], 10);
+      const m = nums[1] ? parseInt(nums[1], 10) : 0;
+      const pm = /오후|저녁|밤|pm/i.test(part);
+      const am = /오전|새벽|아침|am/i.test(part);
+      if (pm && h < 12) h += 12;
+      else if (am && h === 12) h = 0;
+      else if (!am && !pm && prevPM && h < 12) h += 12;
+      if (h > 24 || m > 59) return s0;
+      prevPM = pm || prevPM;
+      out.push(`${String(h % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    }
+    return out.join(" - ");
   }
 
   function extractJson(text) {
@@ -182,13 +218,15 @@
           day,
           id: `ai-${stamp}-${i}`,
           name: String(p.name).trim(),
-          time: String(p.time || "").trim() || "시간 미정",
+          time: normalizeTime(p.time) || "시간 미정",
+          searchName: p.searchName ? String(p.searchName).trim() : "",
           lat: validCoord ? lat : center.lat,
           lng: validCoord ? lng : center.lng,
           coordMissing: !validCoord,
           category: CATEGORIES.includes(p.category) ? p.category : "sightseeing",
           description: String(p.description || "").trim(),
-          price: isFinite(price) && price >= 0 ? price : undefined
+          price: isFinite(price) && price >= 0 ? price : undefined,
+          priceUnit: p.priceUnit === "group" ? "group" : p.priceUnit === "person" ? "person" : (p.category === "hotel" ? "group" : "person")
         };
       });
     if (out.length === 0) throw new Error("AI가 장소를 하나도 만들지 못했습니다. 조건을 바꿔 다시 시도해 주세요.");
@@ -205,10 +243,11 @@
     return normalizePlan(raw, input.days);
   }
 
-  async function refineTrip(trip, instruction, opts) {
-    const raw = await callGemini(buildRefinePrompt(trip, instruction), opts);
+  async function refineTrip(trip, instruction, opts = {}) {
+    const raw = await callGemini(buildRefinePrompt(trip, instruction, opts.day), opts);
     const center = trip.places[0] ? { lat: trip.places[0].lat, lng: trip.places[0].lng } : null;
-    return normalizePlan(raw, trip.days, center);
+    // 전체 수정 시 AI가 일수를 늘릴 수 있도록 넉넉히 허용
+    return normalizePlan(raw, opts.day ? trip.days : Math.max(trip.days, 14), center);
   }
 
   async function testApiKey() {
@@ -217,16 +256,17 @@
   }
 
   // ---------- 장소 검색 (OpenStreetMap Nominatim) ----------
-  async function searchPlaces(query, near) {
+  async function searchPlaces(query, near, opts = {}) {
     const params = new URLSearchParams({
       format: "jsonv2",
       q: query,
-      limit: "6",
+      limit: String(opts.limit || 6),
       "accept-language": "ko,en"
     });
     if (near) {
       const d = 0.6;
       params.set("viewbox", `${near.lng - d},${near.lat + d},${near.lng + d},${near.lat - d}`);
+      if (opts.bounded) params.set("bounded", "1");
     }
     const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
       headers: { "Accept": "application/json" }
@@ -261,8 +301,8 @@
 
   async function encodeTrip(trip) {
     const slim = {
-      t: trip.title, d: trip.destination, n: trip.days, b: trip.budget, s: trip.startDate || "",
-      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0])
+      t: trip.title, d: trip.destination, n: trip.days, b: trip.budget, s: trip.startDate || "", c: trip.people || 1,
+      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0])
     };
     const bytes = new TextEncoder().encode(JSON.stringify(slim));
     if (typeof CompressionStream !== "undefined") {
@@ -279,10 +319,10 @@
     const stamp = Date.now();
     return {
       id: `shared-${stamp}`,
-      title: o.t, destination: o.d, days: o.n, budget: o.b || "medium", startDate: o.s || "",
+      title: o.t, destination: o.d, days: o.n, budget: o.b || "medium", startDate: o.s || "", people: o.c || 1,
       places: o.p.map((a, i) => ({
         day: a[0], time: a[1], name: a[2], category: CATEGORIES.includes(a[3]) ? a[3] : "sightseeing",
-        lat: a[4], lng: a[5], description: a[6], price: a[7], id: `sh-${stamp}-${i}`
+        lat: a[4], lng: a[5], description: a[6], price: a[7], priceUnit: a[8] ? "group" : (a[8] === 0 ? "person" : undefined), id: `sh-${stamp}-${i}`
       }))
     };
   }
@@ -291,6 +331,6 @@
     DEFAULT_MODEL,
     getSettings, saveSettings, hasApiKey,
     generateTrip, refineTrip, testApiKey,
-    searchPlaces, encodeTrip, decodeTrip
+    searchPlaces, encodeTrip, decodeTrip, normalizeTime
   };
 })();

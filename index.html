@@ -139,6 +139,22 @@
                   <option value="부모님(어르신) 모시고, 걷는 양을 줄여서">부모님과</option>
                 </select>
               </div>
+              <div class="form-group col col-narrow">
+                <label for="input-people">인원</label>
+                <select id="input-people">
+                  <option value="1">1명</option>
+                  <option value="2" selected>2명</option>
+                  <option value="3">3명</option>
+                  <option value="4">4명</option>
+                  <option value="5">5명</option>
+                  <option value="6">6명</option>
+                  <option value="7">7명</option>
+                  <option value="8">8명 이상</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
               <div class="form-group col">
                 <label for="input-budget">여행 예산</label>
                 <select id="input-budget">
@@ -200,6 +216,7 @@
             <button role="menuitem" data-menu="checklist"><i data-icon="check" data-size="18"></i>준비물 체크리스트</button>
             <button role="menuitem" data-menu="print"><i data-icon="printer" data-size="18"></i>인쇄 / PDF</button>
             <hr>
+            <button role="menuitem" data-menu="delete-day"><i data-icon="trash" data-size="18"></i>이 날 삭제</button>
             <button role="menuitem" data-menu="edit" id="menu-edit-mode"><i data-icon="list" data-size="18"></i>순서 편집 모드</button>
           </div>
         </header>
@@ -264,6 +281,7 @@
             <!-- AI 수정 요청 (하단 고정) -->
             <form class="ai-refine-box" id="ai-refine-form" onsubmit="event.preventDefault();">
               <span class="refine-icon"><i data-icon="sparkles" data-size="18"></i></span>
+              <button type="button" class="refine-scope" id="btn-refine-scope">Day 1만</button>
               <input type="text" id="ai-refine-input" placeholder="AI에게 수정 요청 (예: 2일차 오후는 실내 위주로)" autocomplete="off" enterkeyhint="send">
               <button type="submit" class="btn btn-sm btn-primary" id="btn-ai-refine">수정</button>
             </form>
@@ -431,10 +449,20 @@
             </select>
           </div>
           <div class="form-group col">
-            <label for="edit-place-price">1인 비용 (₩)</label>
-            <input type="number" id="edit-place-price" min="0" step="1000">
+            <label for="edit-place-price">비용 (₩)</label>
+            <div class="price-unit-row">
+              <input type="number" inputmode="numeric" id="edit-place-price" min="0" step="1000">
+              <select id="edit-place-price-unit" aria-label="비용 단위">
+                <option value="person">1인당</option>
+                <option value="group">일행 전체</option>
+              </select>
+            </div>
           </div>
         </div>
+        <label class="shift-check" id="edit-shift-wrap">
+          <input type="checkbox" id="edit-shift-following">
+          시간을 바꾸면 이 날 이후 일정도 같이 밀기/당기기
+        </label>
         <div class="form-group">
           <label for="edit-place-desc">메모</label>
           <textarea id="edit-place-desc" rows="3"></textarea>
@@ -488,6 +516,7 @@
 
   <!-- Load script files -->
   <script src="icons.js"></script>
+  <script src="ui.js"></script>
   <script src="templates.js"></script>
   <script src="ai.js"></script>
   <script src="app.js"></script>
