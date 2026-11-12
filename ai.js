@@ -64,7 +64,7 @@
       "category": "sightseeing | restaurant | cafe | shopping | hotel | transit 중 하나",
       "lat": 35.0,
       "lng": 135.0,
-      "description": "무엇을 하는지, 팁, 이동 방법 등 1~2문장 (한국어)",
+      "description": "무엇을 하는지·팁을 한 문장으로 짧게 (한국어)",
       "price": 15000,
       "priceUnit": "person 또는 group"
     }
@@ -167,44 +167,151 @@
     }
   }
 
-  async function callGemini(prompt, { signal } = {}) {
+  // 스트리밍으로 받아 진행 상황을 알려 주고, 응답이 끊긴 시간 기준으로 타임아웃
+  const T = window.__routyTimeouts || {};
+  const IDLE_TIMEOUT_MS = T.idle || 60000;    // 60초 동안 아무것도 안 오면 중단
+  const TOTAL_TIMEOUT_MS = T.total || 240000; // 최대 4분
+
+  function geminiError(status, msg, model) {
+    if (status === 400 && /api key/i.test(msg)) return new Error("API 키가 올바르지 않습니다. 설정에서 확인해 주세요.");
+    if (status === 403) return new Error("API 키 권한이 없습니다. (키 제한 설정 확인)");
+    if (status === 404) return new Error(`모델 "${model}"을 찾을 수 없습니다. 설정에서 모델명을 확인해 주세요.`);
+    if (status === 429) return new Error("API 사용 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.");
+    if (status === 503) return new Error("Gemini 서버가 혼잡합니다. 잠시 후 다시 시도해 주세요.");
+    return new Error(`AI 오류 (${status}): ${msg}`);
+  }
+
+  // SSE("data: {...}") 또는 JSON(배열/객체) 응답에서 조각들을 꺼냄
+  function parseChunks(raw) {
+    const t = raw.trim();
+    if (!t) return [];
+    if (t.startsWith("data:") || t.includes("\ndata:")) {
+      return t.split(/\r?\n/).filter(l => l.startsWith("data:")).map(l => {
+        try { return JSON.parse(l.slice(5).trim()); } catch (e) { return null; }
+      }).filter(Boolean);
+    }
+    try {
+      const j = JSON.parse(t);
+      return Array.isArray(j) ? j : [j];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function callGemini(prompt, { signal, onProgress } = {}) {
     const { apiKey, model } = getSettings();
     if (!apiKey) throw new Error("설정에서 Gemini API 키를 먼저 등록해 주세요.");
 
-    let res;
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const abortFromOuter = () => ctrl.abort();
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener("abort", abortFromOuter);
+    }
+    let idleTimer = null;
+    const bumpIdle = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => { timedOut = true; ctrl.abort(); }, IDLE_TIMEOUT_MS);
+    };
+    const totalTimer = setTimeout(() => { timedOut = true; ctrl.abort(); }, TOTAL_TIMEOUT_MS);
+
+    const send = (withThinking) => fetch(`${API_BASE}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: Object.assign(
+          { responseMimeType: "application/json" },
+          withThinking ? { thinkingConfig: { thinkingLevel: "low" } } : {}
+        )
+      }),
+      signal: ctrl.signal
+    });
+
     try {
-      res = await fetch(`${API_BASE}/${encodeURIComponent(model)}:generateContent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json" }
-        }),
-        signal
-      });
+      bumpIdle();
+      if (onProgress) onProgress({ phase: "waiting" });
+      let res = await send(true);
+      if (!res.ok) {
+        let data = await res.json().catch(() => ({}));
+        let msg = (data.error && data.error.message) || res.statusText;
+        // 생각 수준 설정을 지원하지 않는 모델이면 설정 없이 다시 시도
+        if (res.status === 400 && /thinking/i.test(msg)) {
+          res = await send(false);
+          if (!res.ok) {
+            data = await res.json().catch(() => ({}));
+            msg = (data.error && data.error.message) || res.statusText;
+            throw geminiError(res.status, msg, model);
+          }
+        } else {
+          throw geminiError(res.status, msg, model);
+        }
+      }
+
+      let text = "";
+      let finish = "";
+      let block = "";
+      let buffer = "";
+      const handleChunk = (chunk) => {
+        const cand = chunk.candidates && chunk.candidates[0];
+        if (cand && cand.finishReason) finish = cand.finishReason;
+        if (chunk.promptFeedback && chunk.promptFeedback.blockReason) block = chunk.promptFeedback.blockReason;
+        const parts = (cand && cand.content && cand.content.parts) || [];
+        parts.forEach(p => {
+          if (typeof p.text !== "string") return;
+          if (p.thought) {
+            if (onProgress) onProgress({ phase: "thinking" });
+          } else {
+            text += p.text;
+          }
+        });
+        if (onProgress && text) {
+          const places = (text.match(/"name"\s*:/g) || []).length;
+          onProgress({ phase: "writing", places, chars: text.length });
+        }
+      };
+
+      if (res.body && res.body.getReader) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          bumpIdle();
+          buffer += decoder.decode(value, { stream: true });
+          // SSE는 빈 줄로 이벤트가 구분됨
+          let idx;
+          while ((idx = buffer.search(/\r?\n\r?\n/)) > -1) {
+            const evt = buffer.slice(0, idx);
+            buffer = buffer.slice(idx).replace(/^\r?\n\r?\n/, "");
+            parseChunks(evt).forEach(handleChunk);
+          }
+        }
+        parseChunks(buffer).forEach(handleChunk);
+      } else {
+        parseChunks(await res.text()).forEach(handleChunk);
+      }
+
+      if (!text) {
+        throw new Error(`AI가 일정을 만들지 못했습니다 (${block || finish || "빈 응답"}).`);
+      }
+      if (finish === "MAX_TOKENS") {
+        throw new Error("일정이 너무 길어 중간에 끊겼어요. 기간을 줄이거나 다시 시도해 주세요.");
+      }
+      return extractJson(text);
     } catch (e) {
-      if (e.name === "AbortError") throw new Error("요청 시간이 초과되었습니다. 다시 시도해 주세요.");
-      throw new Error("네트워크 오류로 AI에 연결하지 못했습니다.");
+      if (e.name === "AbortError") {
+        if (signal && signal.aborted && !timedOut) throw e; // 사용자가 취소
+        throw new Error("AI 응답이 너무 오래 걸려 중단했어요. 다시 시도하거나 설정에서 더 빠른 모델로 바꿔 보세요.");
+      }
+      if (e instanceof TypeError) throw new Error("네트워크 오류로 AI에 연결하지 못했습니다.");
+      throw e;
+    } finally {
+      clearTimeout(idleTimer);
+      clearTimeout(totalTimer);
+      if (signal) signal.removeEventListener("abort", abortFromOuter);
     }
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const msg = (data.error && data.error.message) || res.statusText;
-      if (res.status === 400 && /api key/i.test(msg)) throw new Error("API 키가 올바르지 않습니다. 설정에서 확인해 주세요.");
-      if (res.status === 403) throw new Error("API 키 권한이 없습니다. (키 제한 설정 확인)");
-      if (res.status === 404) throw new Error(`모델 "${model}"을 찾을 수 없습니다. 설정에서 모델명을 확인해 주세요.`);
-      if (res.status === 429) throw new Error("API 사용 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.");
-      throw new Error(`AI 오류 (${res.status}): ${msg}`);
-    }
-
-    const cand = data.candidates && data.candidates[0];
-    const parts = (cand && cand.content && cand.content.parts) || [];
-    const text = parts.filter(p => !p.thought && typeof p.text === "string").map(p => p.text).join("");
-    if (!text) {
-      const reason = (cand && cand.finishReason) || (data.promptFeedback && data.promptFeedback.blockReason) || "빈 응답";
-      throw new Error(`AI가 일정을 만들지 못했습니다 (${reason}).`);
-    }
-    return extractJson(text);
   }
 
   function normalizePlan(raw, days, fallbackCenter) {
