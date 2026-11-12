@@ -27,6 +27,14 @@
     close: '<path d="M6 6l12 12M18 6 6 18"/>',
     pin: '<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
     wallet: '<rect x="3.5" y="6" width="17" height="13" rx="2.5"/><path d="M3.5 10h17M16 14.5h1.5"/>',
+    walk: '<circle cx="13" cy="4.5" r="1.8"/><path d="m9 21 2.5-7.5L14 16v5M8 11l3-3.5 3 1.5 2.5 3M11.5 13.5 10 8"/>',
+    bus: '<rect x="4.5" y="3.5" width="15" height="14" rx="3"/><path d="M4.5 10h15M8 17.5V20M16 17.5V20"/><circle cx="8.5" cy="14" r=".9" fill="currentColor"/><circle cx="15.5" cy="14" r=".9" fill="currentColor"/>',
+    train: '<rect x="5.5" y="3" width="13" height="14" rx="3.5"/><path d="M5.5 10h13M9 20.5l-2 1.5M15 20.5l2 1.5M8.5 17l-1.5 3.5M15.5 17l1.5 3.5"/><circle cx="9" cy="13.5" r=".9" fill="currentColor"/><circle cx="15" cy="13.5" r=".9" fill="currentColor"/>',
+    car: '<path d="M4 16.5V12l2-5h12l2 5v4.5"/><path d="M3.5 12h17v4.5h-17z"/><circle cx="7.5" cy="16.5" r="1.8"/><circle cx="16.5" cy="16.5" r="1.8"/>',
+    taxi: '<path d="M4 16.5V12l2-5h12l2 5v4.5"/><path d="M3.5 12h17v4.5h-17z"/><circle cx="7.5" cy="16.5" r="1.8"/><circle cx="16.5" cy="16.5" r="1.8"/><path d="M10 4.5h4V7h-4z"/>',
+    bike: '<circle cx="6" cy="16" r="3.5"/><circle cx="18" cy="16" r="3.5"/><path d="M6 16l4-7h5l3 7M10 9l3 7M14 6h2.5"/>',
+    ferry: '<path d="M3 18c2 1.5 4 1.5 6 0s4-1.5 6 0 4 1.5 6 0"/><path d="M5 15l1.5-5h11L19 15M9 10V6h6v4"/>',
+    flight: '<path d="M21 14 13.5 10V4.5a1.5 1.5 0 0 0-3 0V10L3 14v2l7.5-2v4L8 19.5V21l4-1 4 1v-1.5L13.5 18v-4L21 16z"/>',
     users: '<circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.5c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M16 5.6a3 3 0 0 1 0 5.8M18 14.6c1.6.6 2.7 2.3 3 4.9"/>'
   };
 

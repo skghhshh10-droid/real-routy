@@ -507,6 +507,9 @@ function saveToLocalStorage() {
 }
 
 // --- 공통 헬퍼 ---
+const TRANSPORT_LABELS = { auto: "알아서", transit: "대중교통", car: "자가용·렌터카", taxi: "택시", walk: "도보 위주" };
+const MOVE_LABELS = { walk: "도보", bus: "버스", subway: "지하철", train: "기차", car: "자가용", taxi: "택시", bike: "자전거", ferry: "배", flight: "비행기" };
+const MOVE_ICONS = { walk: "walk", bus: "bus", subway: "train", train: "train", car: "car", taxi: "taxi", bike: "bike", ferry: "ferry", flight: "flight" };
 const CATEGORY_LABELS = { sightseeing: "관광", restaurant: "맛집", cafe: "카페", shopping: "쇼핑", hotel: "숙소", transit: "이동" };
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -567,6 +570,13 @@ function isInKorea(lat, lng) {
   return lat > 33 && lat < 38.7 && lng > 124.5 && lng < 131;
 }
 
+// 구글 지도 길찾기 이동 수단 (장소별 이동 방법 → 여행 이동 수단 순)
+function googleTravelMode(place, trip) {
+  const m = (place.move && place.move.mode) || trip.transport || "auto";
+  const map = { car: "driving", taxi: "driving", walk: "walking", bike: "bicycling", bus: "transit", subway: "transit", train: "transit", transit: "transit" };
+  return map[m] ? `&travelmode=${map[m]}` : "";
+}
+
 function getPlaceLinks(place) {
   const trip = state.activeTrip || {};
   const domestic = isInKorea(place.lat, place.lng);
@@ -579,7 +589,7 @@ function getPlaceLinks(place) {
     : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
   const routeUrl = domestic
     ? (hasCoord ? `https://map.kakao.com/link/to/${kakaoName},${place.lat},${place.lng}` : `https://map.kakao.com/link/search/${encodeURIComponent(q)}`)
-    : (hasCoord ? `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}` : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}`);
+    : (hasCoord ? `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}` : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}`) + googleTravelMode(place, trip);
   let searchUrl;
   if (place.category === "hotel") {
     searchUrl = place.bookingUrl || `https://www.agoda.com/search?q=${encodeURIComponent(place.name)}`;
@@ -899,6 +909,15 @@ function setupPlannerForm() {
   if (!form) return;
   setupStyleTags();
 
+  document.querySelectorAll("#transport-picker .transport-opt").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#transport-picker .transport-opt").forEach(b => {
+        b.classList.toggle("active", b === btn);
+        b.setAttribute("aria-checked", b === btn ? "true" : "false");
+      });
+    });
+  });
+
   const partySel = document.getElementById("input-party");
   const peopleSel = document.getElementById("input-people");
   partySel.addEventListener("change", () => {
@@ -920,6 +939,7 @@ function setupPlannerForm() {
       budget: document.getElementById("input-budget").value,
       party: partySel.value,
       people: parseInt(peopleSel.value, 10) || 1,
+      transport: (document.querySelector("#transport-picker .transport-opt.active") || {}).dataset?.transport || "auto",
       startDate: document.getElementById("input-start-date").value,
       request: document.getElementById("input-request").value.trim(),
       styles: Array.from(document.querySelectorAll(".style-tags-container .style-tag.active")).map(t => t.getAttribute("data-style"))
@@ -990,6 +1010,7 @@ async function runGeneration(input) {
     styles: input.styles,
     party: input.party,
     people: input.people,
+    transport: input.transport || "auto",
     startDate: input.startDate,
     request: input.request,
     genInput: input,
@@ -1046,7 +1067,7 @@ async function regenerateActiveTrip() {
   const ok = await uiConfirm("같은 조건으로 일정을 새로 만들까요? 지금 초안은 바뀝니다. (되돌리기 가능)", { okText: "다시 만들기" });
   if (!ok) return;
   const before = cloneTrip(t);
-  const input = Object.assign({}, t.genInput, { startDate: t.startDate, people: t.people });
+  const input = Object.assign({}, t.genInput, { startDate: t.startDate, people: t.people, transport: t.transport || "auto" });
   const fresh = await runGeneration(input);
   if (!fresh) return;
   fresh.id = t.id;
@@ -1460,6 +1481,13 @@ function setupPlaceEditModal() {
     place.name = name;
     place.time = window.RoutyAI.normalizeTime(document.getElementById("edit-place-time").value.trim()) || "시간 미정";
     place.priceUnit = document.getElementById("edit-place-price-unit").value;
+    const moveMode = document.getElementById("edit-move-mode").value;
+    const moveMin = parseInt(document.getElementById("edit-move-min").value, 10);
+    if (moveMode) {
+      place.move = { mode: moveMode, minutes: isFinite(moveMin) && moveMin > 0 ? moveMin : undefined, note: place.move && place.move.mode === moveMode ? place.move.note : "" };
+    } else {
+      delete place.move;
+    }
     place.day = parseInt(document.getElementById("edit-place-day").value, 10) || place.day;
     place.category = document.getElementById("edit-place-cat").value;
     const price = parseInt(document.getElementById("edit-place-price").value, 10);
@@ -1511,6 +1539,8 @@ function openPlaceEdit(placeId) {
   document.getElementById("edit-place-cat").value = place.category || "sightseeing";
   document.getElementById("edit-place-price").value = place.price || 0;
   document.getElementById("edit-place-price-unit").value = place.priceUnit === "group" ? "group" : "person";
+  document.getElementById("edit-move-mode").value = place.move && place.move.mode ? place.move.mode : "";
+  document.getElementById("edit-move-min").value = place.move && place.move.minutes ? place.move.minutes : "";
   document.getElementById("edit-place-desc").value = place.description || "";
   const daySel = document.getElementById("edit-place-day");
   daySel.innerHTML = "";
@@ -1617,6 +1647,9 @@ function renderTripMeta() {
       <label class="trip-date-picker meta-item" title="출발일 지정">${window.icon("calendar", 16)}<input type="date" id="trip-start-date-input" value="${esc(t.startDate || "")}" aria-label="출발일"></label>
       <span class="meta-item">${range}${t.days}일</span>
       ${t.party ? `<span class="meta-item">${window.icon("users", 16)}${esc(t.party.split(",")[0])}</span>` : ""}
+      <label class="meta-item meta-transport" title="이동 수단">${window.icon(t.transport === "car" ? "car" : t.transport === "taxi" ? "taxi" : t.transport === "walk" ? "walk" : "bus", 16)}<select id="trip-transport-select" aria-label="이동 수단">
+        ${Object.entries(TRANSPORT_LABELS).map(([k, v]) => `<option value="${k}" ${(t.transport || "auto") === k ? "selected" : ""}>${v}</option>`).join("")}
+      </select></label>
       <span class="meta-item meta-budget">${window.icon("wallet", 16)}${costLabel(t)}</span>
     </div>
     ${t.summary ? `<p class="trip-summary">${esc(t.summary)}</p>` : ""}
@@ -1630,6 +1663,7 @@ function renderTripMeta() {
       </div>` : ""}
     <div class="verify-status" id="verify-status"></div>
   `;
+  document.getElementById("trip-transport-select").addEventListener("change", (e) => changeTripTransport(e.target.value));
   const regen = document.getElementById("btn-regenerate");
   if (regen) regen.addEventListener("click", regenerateActiveTrip);
   const dsave = document.getElementById("btn-draft-save");
@@ -1749,6 +1783,34 @@ function setupTripMenu() {
       showToast(state.editMode ? "순서 편집 모드: ▲▼로 순서를 바꾸고 삭제할 수 있어요." : "순서 편집을 마쳤어요.");
     }
   });
+}
+
+// 여행 이동 수단 변경 → (AI 키가 있으면) 이동 방법·동선 다시 짜기
+async function changeTripTransport(value) {
+  const t = state.activeTrip;
+  if (!t) return;
+  const prev = t.transport || "auto";
+  t.transport = value;
+  persistActiveTrip();
+  renderTripMeta();
+  if (!window.RoutyAI.hasApiKey() || !t.places.length) {
+    showToast(`이동 수단을 '${TRANSPORT_LABELS[value]}'(으)로 바꿨어요. 길찾기 링크에 반영돼요.`);
+    return;
+  }
+  const ok = await uiConfirm(`이동 수단을 '${TRANSPORT_LABELS[value]}'(으)로 바꿨어요.\nAI가 이 기준으로 이동 방법과 동선을 다시 짜 드릴까요?`, { okText: "다시 짜기", cancelText: "설정만 바꾸기" });
+  if (!ok) return;
+  refineScope = "all";
+  updateRefineScopeLabel();
+  const input = document.getElementById("ai-refine-input");
+  input.value = `이동 수단을 '${TRANSPORT_LABELS[value]}' 기준으로 바꿔 줘 (이전: ${TRANSPORT_LABELS[prev]}). 각 장소의 move(이동 방법·소요 시간)를 새로 정하고, 필요하면 동선과 시간도 조정해 줘.`;
+  document.getElementById("ai-refine-form").requestSubmit();
+}
+
+function moveConnectorHtml(move) {
+  if (!move || !move.mode) return "";
+  const label = MOVE_LABELS[move.mode] || "이동";
+  const mins = move.minutes ? ` ${move.minutes}분` : "";
+  return `<div class="move-connector">${window.icon(MOVE_ICONS[move.mode] || "walk", 15)}<span class="move-main">${label}${mins}</span>${move.note ? `<span class="move-note">${esc(move.note)}</span>` : ""}</div>`;
 }
 
 async function deleteActiveDay() {
@@ -2305,6 +2367,11 @@ function renderTimeline() {
       `;
     }
 
+    if (index > 0 && place.move) {
+      const conn = document.createElement("div");
+      conn.innerHTML = moveConnectorHtml(place.move);
+      if (conn.firstElementChild) container.appendChild(conn.firstElementChild);
+    }
     container.appendChild(card);
   });
 }

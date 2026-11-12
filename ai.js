@@ -10,6 +10,16 @@
   const DEFAULT_NAVER_KEY = "btolm1xold";
   const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
   const CATEGORIES = ["sightseeing", "restaurant", "cafe", "shopping", "hotel", "transit"];
+  // 장소 사이 이동 수단
+  const MOVE_MODES = ["walk", "bus", "subway", "train", "car", "taxi", "bike", "ferry", "flight"];
+  // 여행 전체 이동 방식
+  const TRANSPORT_PROMPT = {
+    auto: "이동 수단은 상황에 맞게 가장 효율적인 것으로 섞어서 (도보·대중교통·택시 등)",
+    transit: "대중교통(지하철·버스·기차) 위주. 역·정류장에서 가까운 장소로 동선을 짜고, 택시는 꼭 필요할 때만",
+    car: "자가용/렌터카로 이동. 차로 가기 좋은 교외 명소도 포함하고, 장소마다 주차 가능 여부나 주차 팁을 설명에 짧게 넣기",
+    taxi: "택시 위주. 이동 시간이 짧도록 묶고, 택시 잡기 어려운 곳은 피하기",
+    walk: "도보 위주. 걸어서 이동 가능한 범위로 촘촘하게, 먼 곳만 대중교통"
+  };
 
   // ---------- 설정 ----------
   function getSettings() {
@@ -66,7 +76,8 @@
       "lng": 135.0,
       "description": "무엇을 하는지·팁을 한 문장으로 짧게 (한국어)",
       "price": 15000,
-      "priceUnit": "person 또는 group"
+      "priceUnit": "person 또는 group",
+      "move": { "mode": "walk | bus | subway | train | car | taxi | bike | ferry | flight 중 하나", "minutes": 15, "note": "직전 장소에서 여기까지 가는 방법 (예: 2호선 강남역→홍대입구역)" }
     }
   ],
   "tips": ["이 여행에 맞는 준비물/주의사항 3~6개 (짧게)"]
@@ -78,7 +89,8 @@
 - time은 24시간제 "HH:MM - HH:MM" 형식. 하루 일정은 시간 순서대로.
 - 하루에 4~7곳. 이동 동선이 짧도록 가까운 곳끼리 묶으세요.
 - 숙박이 있는 날(마지막 날 제외)은 그날 마지막에 숙소(category "hotel")를 넣으세요.
-- 장거리 이동(공항, 기차 등)은 category "transit"으로 넣으세요.`;
+- 장거리 이동(공항, 기차 등)은 category "transit"으로 넣으세요.
+- move는 "직전 장소에서 이 장소까지" 이동 방법입니다. 각 날의 첫 장소는 move를 생략하세요. minutes는 예상 소요 시간(분).`;
 
   function buildCreatePrompt(input) {
     const styles = (input.styles || []).map(s => STYLE_LABELS[s] || s).join(", ") || "자유";
@@ -88,6 +100,7 @@
       `- 기간: ${input.days}일${input.days > 1 ? ` (${input.days - 1}박 ${input.days}일)` : " (당일치기)"}`,
       input.startDate ? `- 출발일: ${input.startDate} (계절/요일/휴무일을 고려하세요)` : "",
       input.party ? `- 동행: ${input.party}${input.people ? ` (총 ${input.people}명)` : ""}` : "",
+      `- 이동 수단: ${TRANSPORT_PROMPT[input.transport] || TRANSPORT_PROMPT.auto}`,
       `- 예산: ${BUDGET_LABELS[input.budget] || "보통"}`,
       `- 선호 스타일: ${styles}`,
       input.request ? `- 추가 요청: ${input.request}` : "",
@@ -102,10 +115,11 @@
       destination: trip.destination,
       days: trip.days,
       people: trip.people || null,
+      transport: TRANSPORT_PROMPT[trip.transport] || TRANSPORT_PROMPT.auto,
       startDate: trip.startDate || null,
       places: trip.places.map(p => ({
         day: p.day, time: p.time, name: p.name, searchName: p.searchName, category: p.category,
-        lat: p.lat, lng: p.lng, description: p.description, price: p.price, priceUnit: p.priceUnit
+        lat: p.lat, lng: p.lng, description: p.description, price: p.price, priceUnit: p.priceUnit, move: p.move
       }))
     };
     const scope = day
@@ -314,6 +328,18 @@
     }
   }
 
+  function normalizeMove(m) {
+    if (!m || typeof m !== "object") return undefined;
+    const mode = MOVE_MODES.includes(m.mode) ? m.mode : null;
+    const minutes = parseInt(m.minutes, 10);
+    if (!mode && !isFinite(minutes)) return undefined;
+    return {
+      mode: mode || "walk",
+      minutes: isFinite(minutes) && minutes >= 0 ? minutes : undefined,
+      note: m.note ? String(m.note).trim().slice(0, 80) : ""
+    };
+  }
+
   function normalizePlan(raw, days, fallbackCenter) {
     const places = Array.isArray(raw.places) ? raw.places : [];
     const center = fallbackCenter || { lat: 37.5665, lng: 126.978 };
@@ -340,7 +366,8 @@
           category: CATEGORIES.includes(p.category) ? p.category : "sightseeing",
           description: String(p.description || "").trim(),
           price: isFinite(price) && price >= 0 ? price : undefined,
-          priceUnit: p.priceUnit === "group" ? "group" : p.priceUnit === "person" ? "person" : (p.category === "hotel" ? "group" : "person")
+          priceUnit: p.priceUnit === "group" ? "group" : p.priceUnit === "person" ? "person" : (p.category === "hotel" ? "group" : "person"),
+          move: normalizeMove(p.move)
         };
       });
     if (out.length === 0) throw new Error("AI가 장소를 하나도 만들지 못했습니다. 조건을 바꿔 다시 시도해 주세요.");
@@ -415,8 +442,8 @@
 
   async function encodeTrip(trip) {
     const slim = {
-      t: trip.title, d: trip.destination, n: trip.days, b: trip.budget, s: trip.startDate || "", c: trip.people || 1,
-      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0])
+      t: trip.title, d: trip.destination, n: trip.days, b: trip.budget, s: trip.startDate || "", c: trip.people || 1, m: trip.transport || "auto",
+      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0, p.move ? [p.move.mode, p.move.minutes || 0, p.move.note || ""] : 0])
     };
     const bytes = new TextEncoder().encode(JSON.stringify(slim));
     if (typeof CompressionStream !== "undefined") {
@@ -433,10 +460,12 @@
     const stamp = Date.now();
     return {
       id: `shared-${stamp}`,
-      title: o.t, destination: o.d, days: o.n, budget: o.b || "medium", startDate: o.s || "", people: o.c || 1,
+      title: o.t, destination: o.d, days: o.n, budget: o.b || "medium", startDate: o.s || "", people: o.c || 1, transport: o.m || "auto",
       places: o.p.map((a, i) => ({
         day: a[0], time: a[1], name: a[2], category: CATEGORIES.includes(a[3]) ? a[3] : "sightseeing",
-        lat: a[4], lng: a[5], description: a[6], price: a[7], priceUnit: a[8] ? "group" : (a[8] === 0 ? "person" : undefined), id: `sh-${stamp}-${i}`
+        lat: a[4], lng: a[5], description: a[6], price: a[7], priceUnit: a[8] ? "group" : (a[8] === 0 ? "person" : undefined),
+        move: Array.isArray(a[9]) ? normalizeMove({ mode: a[9][0], minutes: a[9][1], note: a[9][2] }) : undefined,
+        id: `sh-${stamp}-${i}`
       }))
     };
   }
@@ -445,6 +474,6 @@
     DEFAULT_MODEL,
     getSettings, saveSettings, hasApiKey,
     generateTrip, refineTrip, testApiKey,
-    searchPlaces, encodeTrip, decodeTrip, normalizeTime
+    searchPlaces, encodeTrip, decodeTrip, normalizeTime, normalizeMove, MOVE_MODES
   };
 })();
