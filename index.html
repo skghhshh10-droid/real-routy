@@ -225,6 +225,10 @@
           <!-- 지도 -->
           <div id="map-wrapper">
             <div id="map"></div>
+            <div id="kakao-map" style="display:none"></div>
+            <div id="naver-map" style="display:none"></div>
+            <div id="ofm-map" style="display:none"></div>
+            <span class="map-engine-credit" id="map-engine-credit"></span>
             <div class="map-controls">
               <span id="map-day-indicator">Day 1</span>
             </div>
@@ -335,6 +339,27 @@
               <button class="btn btn-sm btn-secondary" id="btn-test-settings">연결 테스트</button>
             </div>
             <div class="settings-status" id="settings-status"></div>
+          </div>
+
+          <div class="settings-card">
+            <h3>지도</h3>
+            <p class="settings-desc">
+              <strong>국내 일정</strong>은 네이버 지도, <strong>해외 일정</strong>은 OpenFreeMap(무료·키 없음)으로 표시합니다.
+              불러오지 못하면 자동으로 다른 지도로 바뀌어요.
+            </p>
+            <div class="form-group">
+              <label for="setting-naver-key">네이버 지도 Client ID</label>
+              <input type="text" id="setting-naver-key" placeholder="네이버 클라우드 Maps → Application → 인증 정보" autocomplete="off" spellcheck="false">
+              <small class="settings-hint">비우면 국내 일정도 OpenFreeMap으로 표시돼요. Client Secret은 넣지 마세요.</small>
+            </div>
+            <div class="form-group">
+              <label for="setting-kakao-key">카카오 JavaScript 키 (선택)</label>
+              <input type="text" id="setting-kakao-key" placeholder="예: 1a2b3c..." autocomplete="off" spellcheck="false">
+            </div>
+            <div class="settings-actions">
+              <button class="btn btn-sm btn-primary" id="btn-save-kakao">저장</button>
+            </div>
+            <div class="settings-status" id="kakao-status"></div>
           </div>
 
           <div class="settings-card">
