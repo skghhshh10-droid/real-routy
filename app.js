@@ -960,17 +960,26 @@ async function runGeneration(input) {
     ? ["여행지 정보를 모으는 중...", "실제 장소와 동선을 고르는 중...", "시간표와 예상 비용을 계산하는 중...", "거의 다 됐어요. 일정을 다듬는 중..."]
     : ["샘플 일정을 만드는 중..."];
   let msgIdx = 0;
+  let progressShown = false;
   statusText.textContent = messages[0];
   elapsedEl.textContent = "";
   const t0 = Date.now();
   const ticker = setInterval(() => {
     const sec = Math.floor((Date.now() - t0) / 1000);
     elapsedEl.textContent = `${sec}초 경과`;
-    if (sec > 0 && sec % 6 === 0 && msgIdx < messages.length - 1) {
+    if (!progressShown && sec > 0 && sec % 6 === 0 && msgIdx < messages.length - 1) {
       msgIdx++;
       statusText.textContent = messages[msgIdx];
     }
   }, 1000);
+  const onProgress = (p) => {
+    if (p.phase === "thinking" && !progressShown) {
+      statusText.textContent = "AI가 동선을 구상하는 중...";
+    } else if (p.phase === "writing") {
+      progressShown = true;
+      statusText.textContent = p.places ? `일정 작성 중 · 장소 ${p.places}곳` : "일정 작성 시작...";
+    }
+  };
 
   const base = {
     id: `trip-${Date.now()}`,
@@ -992,9 +1001,8 @@ async function runGeneration(input) {
     if (useAI) {
       generateController = new AbortController();
       generateCancelledByUser = false;
-      const timeout = setTimeout(() => generateController && generateController.abort(), 150000);
       try {
-        const plan = await window.RoutyAI.generateTrip(input, { signal: generateController.signal });
+        const plan = await window.RoutyAI.generateTrip(input, { signal: generateController.signal, onProgress });
         trip = Object.assign(base, {
           title: plan.title || `${input.destination} ${input.days}일 여행`,
           summary: plan.summary,
@@ -1003,7 +1011,7 @@ async function runGeneration(input) {
           source: "ai"
         });
       } finally {
-        clearTimeout(timeout);
+        /* 타임아웃은 ai.js가 응답 끊김 기준으로 처리 */
       }
     } else {
       await sleep(900);
@@ -1243,7 +1251,13 @@ function setupItineraryControls() {
     refineForm.classList.add("loading");
     const scopeDay = refineScope === "day" ? state.activeTripDay : null;
     try {
-      const plan = await window.RoutyAI.refineTrip(state.activeTrip, instruction, { day: scopeDay });
+      const plan = await window.RoutyAI.refineTrip(state.activeTrip, instruction, {
+        day: scopeDay,
+        onProgress: (p) => {
+          if (p.phase === "writing" && p.places) refineBtn.textContent = `${p.places}곳…`;
+          else if (p.phase === "thinking") refineBtn.textContent = "구상 중…";
+        }
+      });
       const t = state.activeTrip;
       refineUndoTrip = cloneTrip(t);
       const oldPlaces = scopeDay ? t.places.filter(p => p.day === scopeDay) : t.places;
