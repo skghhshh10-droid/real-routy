@@ -226,6 +226,8 @@
           <div id="map-wrapper">
             <div id="map"></div>
             <div id="kakao-map" style="display:none"></div>
+            <div id="naver-map" style="display:none"></div>
+            <div id="ofm-map" style="display:none"></div>
             <span class="map-engine-credit" id="map-engine-credit"></span>
             <div class="map-controls">
               <span id="map-day-indicator">Day 1</span>
@@ -340,19 +342,18 @@
           </div>
 
           <div class="settings-card">
-            <h3>지도 (카카오맵)</h3>
+            <h3>지도</h3>
             <p class="settings-desc">
-              카카오 JavaScript 키를 넣으면 <strong>국내 일정</strong>은 카카오맵으로 표시하고, 해외 일정은 기본 지도(OpenStreetMap)를 그대로 씁니다.
-              키가 없거나 불러오지 못하면 자동으로 기본 지도로 표시돼요.
+              <strong>국내 일정</strong>은 네이버 지도, <strong>해외 일정</strong>은 OpenFreeMap(무료·키 없음)으로 표시합니다.
+              불러오지 못하면 자동으로 다른 지도로 바뀌어요.
             </p>
-            <ol class="settings-steps">
-              <li><a href="https://developers.kakao.com/console/app" target="_blank" rel="noopener">카카오디벨로퍼스</a>에서 앱 만들기</li>
-              <li>앱 설정 → 카카오맵 → 사용 설정 <strong>ON</strong></li>
-              <li>앱 키 → JavaScript 키 → JavaScript SDK 도메인에 이 앱 주소 등록 (예: https://skghhshh10-droid.github.io)</li>
-              <li>JavaScript 키를 아래에 붙여넣기</li>
-            </ol>
             <div class="form-group">
-              <label for="setting-kakao-key">카카오 JavaScript 키</label>
+              <label for="setting-naver-key">네이버 지도 Client ID</label>
+              <input type="text" id="setting-naver-key" placeholder="네이버 클라우드 Maps → Application → 인증 정보" autocomplete="off" spellcheck="false">
+              <small class="settings-hint">비우면 국내 일정도 OpenFreeMap으로 표시돼요. Client Secret은 넣지 마세요.</small>
+            </div>
+            <div class="form-group">
+              <label for="setting-kakao-key">카카오 JavaScript 키 (선택)</label>
               <input type="text" id="setting-kakao-key" placeholder="예: 1a2b3c..." autocomplete="off" spellcheck="false">
             </div>
             <div class="settings-actions">

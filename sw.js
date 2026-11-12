@@ -1,12 +1,14 @@
 // Routy service worker: 앱 파일은 네트워크 우선(최신 유지) + 오프라인 시 캐시,
 // 지도 타일·폰트·Leaflet 등 외부 정적 리소스는 캐시 우선. AI/장소검색 API는 캐시하지 않음.
-const VERSION = "routy-v5-1";
+const VERSION = "routy-v6-1";
 const APP_SHELL = ["./", "index.html", "styles.css", "layout.css", "icons.js", "ui.js", "app.js", "ai.js", "templates.js", "manifest.json", "icon.svg", "icon-192.png"];
 
 // 지도 라이브러리도 설치 시점에 미리 받아 둠 (첫 실행 직후 오프라인 대비)
 const EXTERNAL = [
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
-  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
+  "https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js",
+  "https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css"
 ];
 
 self.addEventListener("install", (event) => {
@@ -47,6 +49,20 @@ self.addEventListener("fetch", (event) => {
           return res;
         })
         .catch(() => caches.match(req, { ignoreSearch: true }).then(r => r || caches.match("index.html")))
+    );
+    return;
+  }
+
+  // OpenFreeMap: 스타일·타일이 매주 갱신되므로 네트워크 우선, 오프라인이면 캐시
+  if (url.hostname === "tiles.openfreemap.org") {
+    event.respondWith(
+      fetch(req).then(res => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(VERSION + "-ext").then(c => c.put(req, copy));
+        }
+        return res;
+      }).catch(() => caches.match(req))
     );
     return;
   }

@@ -6,6 +6,8 @@
 (function () {
   const SETTINGS_KEY = "routy_settings";
   const DEFAULT_MODEL = "gemini-3.8-flash";
+  // 네이버 지도 Client ID (등록한 github.io 주소에서만 동작하는 공개용 키)
+  const DEFAULT_NAVER_KEY = "btolm1xold";
   const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
   const CATEGORIES = ["sightseeing", "restaurant", "cafe", "shopping", "hotel", "transit"];
 
@@ -13,9 +15,14 @@
   function getSettings() {
     try {
       const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-      return { apiKey: s.apiKey || "", model: s.model || DEFAULT_MODEL, kakaoKey: s.kakaoKey || "" };
+      return {
+        apiKey: s.apiKey || "",
+        model: s.model || DEFAULT_MODEL,
+        kakaoKey: s.kakaoKey || "",
+        naverKey: s.naverKey === undefined ? DEFAULT_NAVER_KEY : s.naverKey
+      };
     } catch (e) {
-      return { apiKey: "", model: DEFAULT_MODEL, kakaoKey: "" };
+      return { apiKey: "", model: DEFAULT_MODEL, kakaoKey: "", naverKey: DEFAULT_NAVER_KEY };
     }
   }
 

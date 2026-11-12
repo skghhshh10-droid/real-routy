@@ -414,6 +414,7 @@ function setupThemeToggle() {
         : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
       mapTileLayer.setUrl(tileUrl);
     }
+    setOfmTheme();
   };
 
   if (mobileToggle) mobileToggle.addEventListener("click", handleToggle);
@@ -614,14 +615,17 @@ function setupSettings() {
 
   const kakaoInput = document.getElementById("setting-kakao-key");
   const kakaoStatus = document.getElementById("kakao-status");
+  const naverInput = document.getElementById("setting-naver-key");
   document.getElementById("btn-save-kakao").addEventListener("click", () => {
-    const key = kakaoInput.value.trim();
-    window.RoutyAI.saveSettings({ kakaoKey: key });
-    kakaoFailedKey = null;
+    const naverKey = naverInput.value.trim();
+    const kakaoKey = kakaoInput.value.trim();
+    window.RoutyAI.saveSettings({ naverKey, kakaoKey });
+    failedEngines.delete("naver");
+    failedEngines.delete("kakao");
     kakaoStatus.className = "settings-status ok";
-    kakaoStatus.textContent = key
-      ? "저장했습니다. 국내 일정을 열면 카카오맵으로 표시돼요."
-      : "카카오 키를 지웠습니다. 모든 일정이 기본 지도로 표시돼요.";
+    kakaoStatus.textContent = naverKey ? "저장했습니다. 국내 일정은 네이버 지도로 표시돼요."
+      : kakaoKey ? "저장했습니다. 국내 일정은 카카오맵으로 표시돼요."
+      : "저장했습니다. 모든 일정이 OpenFreeMap으로 표시돼요.";
   });
 
   document.getElementById("btn-save-settings").addEventListener("click", () => {
@@ -707,6 +711,7 @@ function renderSettingsTab() {
   document.getElementById("setting-api-key").value = s.apiKey;
   document.getElementById("setting-model").value = s.model;
   document.getElementById("setting-kakao-key").value = s.kakaoKey || "";
+  document.getElementById("setting-naver-key").value = s.naverKey || "";
   const statusEl = document.getElementById("settings-status");
   if (statusEl && !statusEl.textContent) {
     statusEl.textContent = s.apiKey ? "API 키가 등록되어 있습니다." : "";
@@ -1864,8 +1869,23 @@ function renderVerifyStatus() {
 let mapMarkersById = {};
 
 function focusPlaceOnMap(placeId) {
+  if (activeMapEngine === "naver") {
+    const it = naverMarkers[placeId];
+    if (it && naverMap) { naverMap.panTo(it.pos); showNaverInfo(placeId); }
+    return;
+  }
   if (activeMapEngine === "kakao") {
-    focusKakaoPlace(placeId);
+    const it = kakaoItems[placeId];
+    if (it && kakaoMap) { kakaoMap.panTo(it.pos); showKakaoInfo(placeId); }
+    return;
+  }
+  if (activeMapEngine === "ofm") {
+    const it = ofmMarkers[placeId];
+    if (it && ofmMap) {
+      ofmMap.easeTo({ center: [it.place.lng, it.place.lat], duration: 400 });
+      Object.values(ofmMarkers).forEach(m => { if (m !== it && m.marker.getPopup().isOpen()) m.marker.togglePopup(); });
+      if (!it.marker.getPopup().isOpen()) it.marker.togglePopup();
+    }
     return;
   }
   const m = mapMarkersById[placeId];
@@ -1936,7 +1956,6 @@ function showItineraryView() {
   }
 
   setTimeout(() => {
-    initLeafletMap();
     renderItineraryAll();
     // AI 일정 중 아직 위치 확인 안 된 장소가 있으면 이어서 확인
     const t = state.activeTrip;
@@ -2308,15 +2327,19 @@ function initLeafletMap() {
   mapMarkersGroup = L.layerGroup().addTo(leafletMap);
 }
 
-// --- 지도 엔진 선택: 국내 일정 + 카카오 키 → 카카오맵, 그 외 → Leaflet(OSM) ---
-let activeMapEngine = "leaflet";
-let kakaoMap = null;
-let kakaoOverlays = [];
-let kakaoOverlaysById = {};
-let kakaoRouteLine = null;
-let kakaoInfoOverlay = null;
-let kakaoSdkPromise = null;
-let kakaoFailedKey = null;
+// --- 지도 엔진 ---
+// 국내 일정: 네이버(키 있음) → 카카오(키 있음) → OpenFreeMap → 기본(Leaflet)
+// 해외 일정: OpenFreeMap → 기본(Leaflet)
+// 불러오기에 실패한 엔진은 이번 실행 동안 건너뛰고 다음 엔진으로 자동 대체
+const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js";
+const MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css";
+const OFM_STYLE = { light: "https://tiles.openfreemap.org/styles/positron", dark: "https://tiles.openfreemap.org/styles/dark" };
+const ENGINE_LABEL = { naver: "네이버 지도", kakao: "카카오맵", ofm: "OpenFreeMap", leaflet: "기본 지도" };
+
+let activeMapEngine = null;
+const failedEngines = new Set();
+const scriptPromises = {};
+let mapRenderSeq = 0;
 
 function isDomesticTrip(trip) {
   const pts = (trip.places || []).filter(p => !p.coordMissing);
@@ -2325,160 +2348,340 @@ function isDomesticTrip(trip) {
   return inKorea / pts.length >= 0.6;
 }
 
-function wantedMapEngine() {
-  const key = window.RoutyAI.getSettings().kakaoKey;
-  if (!key || key === kakaoFailedKey || !state.activeTrip) return "leaflet";
-  return isDomesticTrip(state.activeTrip) ? "kakao" : "leaflet";
+function engineCandidates() {
+  const s = window.RoutyAI.getSettings();
+  const list = [];
+  if (state.activeTrip && isDomesticTrip(state.activeTrip)) {
+    if (s.naverKey) list.push("naver");
+    if (s.kakaoKey) list.push("kakao");
+  }
+  list.push("ofm", "leaflet");
+  return list.filter(e => !failedEngines.has(e));
 }
 
-function loadKakaoSdk(key) {
-  if (window.kakao && window.kakao.maps && window.kakao.maps.Map) return Promise.resolve();
-  if (kakaoSdkPromise) return kakaoSdkPromise;
-  kakaoSdkPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false`;
-    script.async = true;
-    const timer = setTimeout(() => reject(new Error("timeout")), 12000);
-    script.onload = () => {
-      if (!window.kakao || !window.kakao.maps || !window.kakao.maps.load) {
-        clearTimeout(timer);
-        reject(new Error("sdk"));
-        return;
-      }
-      window.kakao.maps.load(() => {
-        clearTimeout(timer);
-        resolve();
-      });
-    };
-    script.onerror = () => {
-      clearTimeout(timer);
-      reject(new Error("load"));
-    };
-    document.head.appendChild(script);
+function loadScriptOnce(id, url, isReady, timeoutMs = 12000) {
+  if (isReady()) return Promise.resolve();
+  if (scriptPromises[id]) return scriptPromises[id];
+  scriptPromises[id] = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = url;
+    s.async = true;
+    const timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+    s.onload = () => { clearTimeout(timer); isReady() ? resolve() : reject(new Error("not ready")); };
+    s.onerror = () => { clearTimeout(timer); reject(new Error("load")); };
+    document.head.appendChild(s);
   }).catch(err => {
-    kakaoSdkPromise = null;
+    delete scriptPromises[id];
     throw err;
   });
-  return kakaoSdkPromise;
+  return scriptPromises[id];
+}
+
+function markEngineFailed(engine, notify) {
+  if (failedEngines.has(engine)) return;
+  failedEngines.add(engine);
+  if (notify) {
+    const fb = engineCandidates()[0];
+    const OBJ = { naver: "네이버 지도를", kakao: "카카오맵을", ofm: "OpenFreeMap을", leaflet: "기본 지도를" };
+    const TO = { naver: "네이버 지도로", kakao: "카카오맵으로", ofm: "OpenFreeMap으로", leaflet: "기본 지도로" };
+    showToast(`${OBJ[engine]} 불러오지 못해 ${TO[fb]} 표시합니다.${engine === "naver" || engine === "kakao" ? " 설정의 키와 등록 주소를 확인해 주세요." : ""}`, 5000);
+  }
+  if (state.activeTab === "itinerary") updateMapMarkers();
 }
 
 function showMapEngine(engine) {
   activeMapEngine = engine;
-  const leafletEl = document.getElementById("map");
-  const kakaoEl = document.getElementById("kakao-map");
-  if (leafletEl) leafletEl.style.display = engine === "kakao" ? "none" : "";
-  if (kakaoEl) kakaoEl.style.display = engine === "kakao" ? "" : "none";
+  const ids = { naver: "naver-map", kakao: "kakao-map", ofm: "ofm-map", leaflet: "map" };
+  Object.entries(ids).forEach(([e, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = e === engine ? "" : "none";
+  });
   const credit = document.getElementById("map-engine-credit");
   if (credit) credit.textContent = engine === "kakao" ? "카카오맵" : "";
 }
 
 function refreshMapSize() {
-  if (activeMapEngine === "kakao" && kakaoMap) kakaoMap.relayout();
+  if (activeMapEngine === "naver" && naverMap) {
+    const el = document.getElementById("naver-map");
+    naverMap.setSize(new window.naver.maps.Size(el.clientWidth, el.clientHeight));
+  } else if (activeMapEngine === "kakao" && kakaoMap) kakaoMap.relayout();
+  else if (activeMapEngine === "ofm" && ofmMap) ofmMap.resize();
   else if (leafletMap) leafletMap.invalidateSize();
+}
+
+function dayPlacesForMap() {
+  const dayPlaces = state.activeTrip.places.filter(p => p.day === state.activeTripDay);
+  const ind = document.getElementById("map-day-indicator");
+  if (ind) ind.textContent = `Day ${state.activeTripDay} · ${dayPlaces.length}곳`;
+  return dayPlaces;
+}
+
+function markerElement(place, index) {
+  let cls = "map-number-marker";
+  if (place.category === "hotel") cls += " hotel";
+  else if (place.category === "transit") cls += " transit";
+  const el = document.createElement("div");
+  el.className = `${cls} js-map-marker`;
+  el.textContent = String(index + 1);
+  return el;
+}
+
+function popupHtml(place, index) {
+  return `<div class="map-info"><strong>${index + 1}. ${esc(place.name)}</strong><span>${esc(place.time)}</span></div>`;
 }
 
 function updateMapMarkers() {
   if (!state.activeTrip) return;
-  const engine = wantedMapEngine();
-  if (engine === "kakao") {
-    const key = window.RoutyAI.getSettings().kakaoKey;
-    loadKakaoSdk(key).then(() => {
-      if (wantedMapEngine() !== "kakao") return updateMapMarkers();
-      showMapEngine("kakao");
-      renderKakaoMarkers();
-    }).catch(() => {
-      // 키 오류·도메인 미등록·네트워크 문제 → 기본 지도로 대체
-      kakaoFailedKey = key;
-      showToast("카카오맵을 불러오지 못해 기본 지도로 표시합니다. 설정의 카카오 키와 등록 도메인을 확인해 주세요.", 5000);
-      updateMapMarkers();
+  const seq = ++mapRenderSeq;
+  const engine = engineCandidates()[0];
+  const renderers = { naver: renderNaver, kakao: renderKakao, ofm: renderOfm, leaflet: renderLeaflet };
+  Promise.resolve()
+    .then(() => renderers[engine](seq))
+    .catch(err => {
+      console.warn(`[map] ${engine} 실패`, err);
+      if (engine === "leaflet") return;
+      markEngineFailed(engine, true);
     });
-    return;
+}
+
+// ---------- 네이버 ----------
+let naverMap = null;
+let naverMarkers = {};
+let naverLine = null;
+let naverInfo = null;
+
+async function renderNaver(seq) {
+  const key = window.RoutyAI.getSettings().naverKey;
+  window.navermap_authFailure = () => markEngineFailed("naver", true);
+  await loadScriptOnce("naver", `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(key)}`,
+    () => !!(window.naver && window.naver.maps && window.naver.maps.Map));
+  if (seq !== mapRenderSeq) return;
+  const nm = window.naver.maps;
+  showMapEngine("naver");
+  const el = document.getElementById("naver-map");
+  if (!naverMap) {
+    naverMap = new nm.Map(el, {
+      center: new nm.LatLng(37.5665, 126.978),
+      zoom: 12,
+      zoomControl: false,
+      mapDataControl: false,
+      scaleControl: false
+    });
+  } else {
+    refreshMapSize();
   }
+  Object.values(naverMarkers).forEach(m => m.marker.setMap(null));
+  naverMarkers = {};
+  if (naverLine) { naverLine.setMap(null); naverLine = null; }
+  if (naverInfo) { naverInfo.close(); naverInfo = null; }
+
+  const dayPlaces = dayPlacesForMap();
+  if (!dayPlaces.length) return;
+  const path = [];
+  dayPlaces.forEach((place, index) => {
+    const pos = new nm.LatLng(place.lat, place.lng);
+    path.push(pos);
+    const marker = new nm.Marker({
+      position: pos,
+      map: naverMap,
+      icon: { content: markerElement(place, index).outerHTML, anchor: new nm.Point(13, 13) }
+    });
+    nm.Event.addListener(marker, "click", () => {
+      showNaverInfo(place.id);
+      focusPlaceCard(place.id);
+    });
+    naverMarkers[place.id] = { marker, place, index, pos };
+  });
+  if (path.length > 1) {
+    naverLine = new nm.Polyline({ map: naverMap, path, strokeColor: "#6366f1", strokeWeight: 3, strokeOpacity: 0.8, strokeStyle: "shortdash" });
+    const bounds = new nm.LatLngBounds(path[0], path[0]);
+    path.forEach(p => bounds.extend(p));
+    naverMap.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 });
+  } else {
+    naverMap.setCenter(path[0]);
+    naverMap.setZoom(15);
+  }
+}
+
+function showNaverInfo(placeId) {
+  const item = naverMarkers[placeId];
+  if (!item) return;
+  const nm = window.naver.maps;
+  if (naverInfo) naverInfo.close();
+  naverInfo = new nm.InfoWindow({
+    content: popupHtml(item.place, item.index),
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    disableAnchor: true,
+    pixelOffset: new nm.Point(0, -16)
+  });
+  naverInfo.open(naverMap, item.marker);
+}
+
+// ---------- 카카오 ----------
+let kakaoMap = null;
+let kakaoItems = {};
+let kakaoRouteLine = null;
+let kakaoInfoOverlay = null;
+
+async function renderKakao(seq) {
+  const key = window.RoutyAI.getSettings().kakaoKey;
+  await loadScriptOnce("kakao", `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false`,
+    () => !!(window.kakao && window.kakao.maps && window.kakao.maps.load));
+  await new Promise(r => window.kakao.maps.load(r));
+  if (seq !== mapRenderSeq) return;
+  const km = window.kakao.maps;
+  showMapEngine("kakao");
+  const el = document.getElementById("kakao-map");
+  if (!kakaoMap) kakaoMap = new km.Map(el, { center: new km.LatLng(37.5665, 126.978), level: 6 });
+  else kakaoMap.relayout();
+  Object.values(kakaoItems).forEach(i => i.overlay.setMap(null));
+  kakaoItems = {};
+  if (kakaoRouteLine) { kakaoRouteLine.setMap(null); kakaoRouteLine = null; }
+  if (kakaoInfoOverlay) { kakaoInfoOverlay.setMap(null); kakaoInfoOverlay = null; }
+
+  const dayPlaces = dayPlacesForMap();
+  if (!dayPlaces.length) return;
+  const bounds = new km.LatLngBounds();
+  const path = [];
+  dayPlaces.forEach((place, index) => {
+    const pos = new km.LatLng(place.lat, place.lng);
+    path.push(pos);
+    bounds.extend(pos);
+    const el2 = markerElement(place, index);
+    el2.addEventListener("click", () => {
+      showKakaoInfo(place.id);
+      focusPlaceCard(place.id);
+    });
+    const overlay = new km.CustomOverlay({ position: pos, content: el2, xAnchor: 0.5, yAnchor: 0.5, clickable: true, zIndex: 3 });
+    overlay.setMap(kakaoMap);
+    kakaoItems[place.id] = { overlay, place, index, pos };
+  });
+  if (path.length > 1) {
+    kakaoRouteLine = new km.Polyline({ path, strokeWeight: 3, strokeColor: "#6366f1", strokeOpacity: 0.8, strokeStyle: "shortdash" });
+    kakaoRouteLine.setMap(kakaoMap);
+    kakaoMap.setBounds(bounds, 40, 40, 40, 40);
+  } else {
+    kakaoMap.setCenter(path[0]);
+    kakaoMap.setLevel(4);
+  }
+}
+
+function showKakaoInfo(placeId) {
+  const item = kakaoItems[placeId];
+  if (!item) return;
+  const km = window.kakao.maps;
+  if (kakaoInfoOverlay) kakaoInfoOverlay.setMap(null);
+  const box = document.createElement("div");
+  box.innerHTML = popupHtml(item.place, item.index);
+  kakaoInfoOverlay = new km.CustomOverlay({ position: item.pos, content: box.firstElementChild, xAnchor: 0.5, yAnchor: 1.7, zIndex: 5 });
+  kakaoInfoOverlay.setMap(kakaoMap);
+}
+
+// ---------- OpenFreeMap (MapLibre) ----------
+let ofmMap = null;
+let ofmMarkers = {};
+let ofmStyleReady = null;
+let ofmRouteCoords = [];
+
+function loadMaplibre() {
+  if (!document.getElementById("maplibre-css")) {
+    const link = document.createElement("link");
+    link.id = "maplibre-css";
+    link.rel = "stylesheet";
+    link.href = MAPLIBRE_CSS;
+    document.head.appendChild(link);
+  }
+  return loadScriptOnce("maplibre", MAPLIBRE_JS, () => !!window.maplibregl, 15000);
+}
+
+function currentOfmStyle() {
+  return (document.documentElement.getAttribute("data-theme") === "dark") ? OFM_STYLE.dark : OFM_STYLE.light;
+}
+
+// 지명을 한국어로 (한국어 이름이 없으면 현지 이름)
+function applyKoreanLabels(map) {
+  const style = map.getStyle();
+  (style.layers || []).forEach(layer => {
+    if (layer.type !== "symbol" || !layer.layout || !layer.layout["text-field"]) return;
+    const tf = JSON.stringify(layer.layout["text-field"]);
+    if (!/name/.test(tf) || /housenumber|"ref"|\{ref\}/.test(tf)) return;
+    try {
+      map.setLayoutProperty(layer.id, "text-field", ["coalesce", ["get", "name:ko"], ["get", "name"]]);
+    } catch (e) { /* 일부 레이어는 무시 */ }
+  });
+}
+
+function addOfmRouteLayer(map) {
+  if (map.getSource("routy-route")) return;
+  map.addSource("routy-route", { type: "geojson", data: { type: "Feature", geometry: { type: "LineString", coordinates: ofmRouteCoords } } });
+  map.addLayer({
+    id: "routy-route",
+    type: "line",
+    source: "routy-route",
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": "#6366f1", "line-width": 3, "line-opacity": 0.85, "line-dasharray": [1.5, 2] }
+  });
+}
+
+async function renderOfm(seq) {
+  await loadMaplibre();
+  if (seq !== mapRenderSeq) return;
+  const ml = window.maplibregl;
+  showMapEngine("ofm");
+  if (!ofmMap) {
+    ofmMap = new ml.Map({
+      container: "ofm-map",
+      style: currentOfmStyle(),
+      center: [126.978, 37.5665],
+      zoom: 11,
+      attributionControl: { compact: true }
+    });
+    ofmMap.on("style.load", () => {
+      applyKoreanLabels(ofmMap);
+      addOfmRouteLayer(ofmMap);
+    });
+    ofmStyleReady = new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("style timeout")), 12000);
+      ofmMap.once("load", () => { clearTimeout(t); resolve(); });
+    });
+  } else {
+    ofmMap.resize();
+  }
+  await ofmStyleReady;
+  if (seq !== mapRenderSeq) return;
+
+  Object.values(ofmMarkers).forEach(m => m.marker.remove());
+  ofmMarkers = {};
+  const dayPlaces = dayPlacesForMap();
+  ofmRouteCoords = dayPlaces.map(p => [p.lng, p.lat]);
+  const src = ofmMap.getSource("routy-route");
+  if (src) src.setData({ type: "Feature", geometry: { type: "LineString", coordinates: dayPlaces.length > 1 ? ofmRouteCoords : [] } });
+  if (!dayPlaces.length) return;
+
+  const bounds = new ml.LngLatBounds();
+  dayPlaces.forEach((place, index) => {
+    const el = markerElement(place, index);
+    const popup = new ml.Popup({ closeButton: false, offset: 16, className: "ofm-popup" }).setHTML(popupHtml(place, index));
+    const marker = new ml.Marker({ element: el }).setLngLat([place.lng, place.lat]).setPopup(popup).addTo(ofmMap);
+    el.addEventListener("click", () => focusPlaceCard(place.id));
+    ofmMarkers[place.id] = { marker, place };
+    bounds.extend([place.lng, place.lat]);
+  });
+  if (dayPlaces.length > 1) ofmMap.fitBounds(bounds, { padding: 50, maxZoom: 15, duration: 0 });
+  else ofmMap.jumpTo({ center: [dayPlaces[0].lng, dayPlaces[0].lat], zoom: 15 });
+}
+
+function setOfmTheme() {
+  if (ofmMap) ofmMap.setStyle(currentOfmStyle());
+}
+
+// ---------- 기본 지도 (Leaflet) ----------
+async function renderLeaflet() {
   showMapEngine("leaflet");
   if (!leafletMap) initLeafletMap();
   else leafletMap.invalidateSize();
   updateLeafletMarkers();
-}
-
-function renderKakaoMarkers() {
-  const kmaps = window.kakao.maps;
-  const container = document.getElementById("kakao-map");
-  if (!kakaoMap) {
-    kakaoMap = new kmaps.Map(container, { center: new kmaps.LatLng(37.5665, 126.978), level: 6 });
-  } else {
-    kakaoMap.relayout();
-  }
-  kakaoOverlays.forEach(o => o.setMap(null));
-  kakaoOverlays = [];
-  kakaoOverlaysById = {};
-  if (kakaoRouteLine) { kakaoRouteLine.setMap(null); kakaoRouteLine = null; }
-  if (kakaoInfoOverlay) { kakaoInfoOverlay.setMap(null); kakaoInfoOverlay = null; }
-
-  const dayPlaces = state.activeTrip.places.filter(p => p.day === state.activeTripDay);
-  document.getElementById("map-day-indicator").textContent = `Day ${state.activeTripDay} · ${dayPlaces.length}곳`;
-  if (!dayPlaces.length) return;
-
-  const bounds = new kmaps.LatLngBounds();
-  const path = [];
-  dayPlaces.forEach((place, index) => {
-    const pos = new kmaps.LatLng(place.lat, place.lng);
-    path.push(pos);
-    bounds.extend(pos);
-    let cls = "map-number-marker";
-    if (place.category === "hotel") cls += " hotel";
-    else if (place.category === "transit") cls += " transit";
-    const el = document.createElement("div");
-    el.className = `${cls} kakao-marker`;
-    el.textContent = String(index + 1);
-    el.addEventListener("click", () => {
-      showKakaoInfo(place, index);
-      focusPlaceCard(place.id);
-    });
-    const overlay = new kmaps.CustomOverlay({ position: pos, content: el, xAnchor: 0.5, yAnchor: 0.5, clickable: true, zIndex: 3 });
-    overlay.setMap(kakaoMap);
-    kakaoOverlays.push(overlay);
-    kakaoOverlaysById[place.id] = { overlay, place, index, pos };
-  });
-
-  if (path.length > 1) {
-    kakaoRouteLine = new kmaps.Polyline({
-      path,
-      strokeWeight: 3,
-      strokeColor: "#6366f1",
-      strokeOpacity: 0.8,
-      strokeStyle: "shortdash"
-    });
-    kakaoRouteLine.setMap(kakaoMap);
-  }
-  if (path.length === 1) {
-    kakaoMap.setCenter(path[0]);
-    kakaoMap.setLevel(4);
-  } else {
-    kakaoMap.setBounds(bounds, 40, 40, 40, 40);
-  }
-}
-
-function showKakaoInfo(place, index) {
-  const kmaps = window.kakao.maps;
-  if (kakaoInfoOverlay) kakaoInfoOverlay.setMap(null);
-  const box = document.createElement("div");
-  box.className = "kakao-info";
-  box.innerHTML = `<strong>${index + 1}. ${esc(place.name)}</strong><span>${esc(place.time)}</span>`;
-  kakaoInfoOverlay = new kmaps.CustomOverlay({
-    position: new kmaps.LatLng(place.lat, place.lng),
-    content: box,
-    xAnchor: 0.5,
-    yAnchor: 1.7,
-    zIndex: 5
-  });
-  kakaoInfoOverlay.setMap(kakaoMap);
-}
-
-function focusKakaoPlace(placeId) {
-  const item = kakaoOverlaysById[placeId];
-  if (!item || !kakaoMap) return;
-  kakaoMap.panTo(item.pos);
-  showKakaoInfo(item.place, item.index);
 }
 
 function updateLeafletMarkers() {
