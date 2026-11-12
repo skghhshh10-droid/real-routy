@@ -168,7 +168,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupPlaceActionDelegation();
   setupTitleRename();
   renderSidebarTrips();
-  window.addEventListener("orientationchange", () => setTimeout(() => leafletMap && leafletMap.invalidateSize(), 300));
+  window.addEventListener("orientationchange", () => setTimeout(refreshMapSize, 300));
   updateAiNotice();
 
   // Render initial explorer state
@@ -206,9 +206,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
-      if (leafletMap) {
-        leafletMap.invalidateSize();
-      }
+      refreshMapSize();
     }, 200);
   });
 });
@@ -572,9 +570,15 @@ function getPlaceLinks(place) {
   const trip = state.activeTrip || {};
   const domestic = isInKorea(place.lat, place.lng);
   const q = place.coordMissing ? `${place.name} ${trip.destination || ""}`.trim() : place.name;
+  const hasCoord = !place.coordMissing && isFinite(place.lat) && isFinite(place.lng);
+  // 국내: 카카오맵 바로가기(좌표 기준), 해외: 구글 지도
+  const kakaoName = encodeURIComponent(String(place.name).replace(/,/g, " "));
   const mapUrl = domestic
-    ? `https://map.naver.com/p/search/${encodeURIComponent(q)}`
+    ? (hasCoord ? `https://map.kakao.com/link/map/${kakaoName},${place.lat},${place.lng}` : `https://map.kakao.com/link/search/${encodeURIComponent(q)}`)
     : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+  const routeUrl = domestic
+    ? (hasCoord ? `https://map.kakao.com/link/to/${kakaoName},${place.lat},${place.lng}` : `https://map.kakao.com/link/search/${encodeURIComponent(q)}`)
+    : (hasCoord ? `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}` : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}`);
   let searchUrl;
   if (place.category === "hotel") {
     searchUrl = place.bookingUrl || `https://www.agoda.com/search?q=${encodeURIComponent(place.name)}`;
@@ -585,7 +589,7 @@ function getPlaceLinks(place) {
       ? `https://search.naver.com/search.naver?query=${encodeURIComponent(q)}`
       : `https://www.google.com/search?q=${encodeURIComponent(q)}`;
   }
-  return { mapUrl, searchUrl };
+  return { mapUrl, routeUrl, searchUrl };
 }
 
 // --- 설정 화면 ---
@@ -607,6 +611,18 @@ function setupSettings() {
     });
     updateAiNotice();
   };
+
+  const kakaoInput = document.getElementById("setting-kakao-key");
+  const kakaoStatus = document.getElementById("kakao-status");
+  document.getElementById("btn-save-kakao").addEventListener("click", () => {
+    const key = kakaoInput.value.trim();
+    window.RoutyAI.saveSettings({ kakaoKey: key });
+    kakaoFailedKey = null;
+    kakaoStatus.className = "settings-status ok";
+    kakaoStatus.textContent = key
+      ? "저장했습니다. 국내 일정을 열면 카카오맵으로 표시돼요."
+      : "카카오 키를 지웠습니다. 모든 일정이 기본 지도로 표시돼요.";
+  });
 
   document.getElementById("btn-save-settings").addEventListener("click", () => {
     save();
@@ -690,6 +706,7 @@ function renderSettingsTab() {
   const s = window.RoutyAI.getSettings();
   document.getElementById("setting-api-key").value = s.apiKey;
   document.getElementById("setting-model").value = s.model;
+  document.getElementById("setting-kakao-key").value = s.kakaoKey || "";
   const statusEl = document.getElementById("settings-status");
   if (statusEl && !statusEl.textContent) {
     statusEl.textContent = s.apiKey ? "API 키가 등록되어 있습니다." : "";
@@ -1552,6 +1569,7 @@ function setupPlaceActionDelegation() {
     if (!place) return;
     const action = btn.getAttribute("data-action");
     if (action === "map") window.open(getPlaceLinks(place).mapUrl, "_blank", "noopener");
+    else if (action === "route") window.open(getPlaceLinks(place).routeUrl, "_blank", "noopener");
     else if (action === "search") window.open(getPlaceLinks(place).searchUrl, "_blank", "noopener");
     else if (action === "edit") openPlaceEdit(id);
     else if (action === "up") movePlace(id, -1);
@@ -1647,7 +1665,7 @@ function renderNextUp() {
       <div class="nu-time">${esc(next.time)}</div>
     </div>
     <div class="nu-buttons">
-      <button class="nu-go" data-action="map" data-id="${esc(next.id)}">${window.icon("navigate", 18)}길찾기</button>
+      <button class="nu-go" data-action="route" data-id="${esc(next.id)}">${window.icon("navigate", 18)}길찾기</button>
       <button class="nu-delay" data-action="delay" data-id="${esc(next.id)}">늦어짐</button>
     </div>
   `;
@@ -1846,6 +1864,10 @@ function renderVerifyStatus() {
 let mapMarkersById = {};
 
 function focusPlaceOnMap(placeId) {
+  if (activeMapEngine === "kakao") {
+    focusKakaoPlace(placeId);
+    return;
+  }
   const m = mapMarkersById[placeId];
   if (!m || !leafletMap) return;
   leafletMap.panTo(m.getLatLng(), { animate: true });
@@ -2286,7 +2308,180 @@ function initLeafletMap() {
   mapMarkersGroup = L.layerGroup().addTo(leafletMap);
 }
 
+// --- 지도 엔진 선택: 국내 일정 + 카카오 키 → 카카오맵, 그 외 → Leaflet(OSM) ---
+let activeMapEngine = "leaflet";
+let kakaoMap = null;
+let kakaoOverlays = [];
+let kakaoOverlaysById = {};
+let kakaoRouteLine = null;
+let kakaoInfoOverlay = null;
+let kakaoSdkPromise = null;
+let kakaoFailedKey = null;
+
+function isDomesticTrip(trip) {
+  const pts = (trip.places || []).filter(p => !p.coordMissing);
+  if (!pts.length) return false;
+  const inKorea = pts.filter(p => isInKorea(p.lat, p.lng)).length;
+  return inKorea / pts.length >= 0.6;
+}
+
+function wantedMapEngine() {
+  const key = window.RoutyAI.getSettings().kakaoKey;
+  if (!key || key === kakaoFailedKey || !state.activeTrip) return "leaflet";
+  return isDomesticTrip(state.activeTrip) ? "kakao" : "leaflet";
+}
+
+function loadKakaoSdk(key) {
+  if (window.kakao && window.kakao.maps && window.kakao.maps.Map) return Promise.resolve();
+  if (kakaoSdkPromise) return kakaoSdkPromise;
+  kakaoSdkPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false`;
+    script.async = true;
+    const timer = setTimeout(() => reject(new Error("timeout")), 12000);
+    script.onload = () => {
+      if (!window.kakao || !window.kakao.maps || !window.kakao.maps.load) {
+        clearTimeout(timer);
+        reject(new Error("sdk"));
+        return;
+      }
+      window.kakao.maps.load(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    };
+    script.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error("load"));
+    };
+    document.head.appendChild(script);
+  }).catch(err => {
+    kakaoSdkPromise = null;
+    throw err;
+  });
+  return kakaoSdkPromise;
+}
+
+function showMapEngine(engine) {
+  activeMapEngine = engine;
+  const leafletEl = document.getElementById("map");
+  const kakaoEl = document.getElementById("kakao-map");
+  if (leafletEl) leafletEl.style.display = engine === "kakao" ? "none" : "";
+  if (kakaoEl) kakaoEl.style.display = engine === "kakao" ? "" : "none";
+  const credit = document.getElementById("map-engine-credit");
+  if (credit) credit.textContent = engine === "kakao" ? "카카오맵" : "";
+}
+
+function refreshMapSize() {
+  if (activeMapEngine === "kakao" && kakaoMap) kakaoMap.relayout();
+  else if (leafletMap) leafletMap.invalidateSize();
+}
+
 function updateMapMarkers() {
+  if (!state.activeTrip) return;
+  const engine = wantedMapEngine();
+  if (engine === "kakao") {
+    const key = window.RoutyAI.getSettings().kakaoKey;
+    loadKakaoSdk(key).then(() => {
+      if (wantedMapEngine() !== "kakao") return updateMapMarkers();
+      showMapEngine("kakao");
+      renderKakaoMarkers();
+    }).catch(() => {
+      // 키 오류·도메인 미등록·네트워크 문제 → 기본 지도로 대체
+      kakaoFailedKey = key;
+      showToast("카카오맵을 불러오지 못해 기본 지도로 표시합니다. 설정의 카카오 키와 등록 도메인을 확인해 주세요.", 5000);
+      updateMapMarkers();
+    });
+    return;
+  }
+  showMapEngine("leaflet");
+  if (!leafletMap) initLeafletMap();
+  else leafletMap.invalidateSize();
+  updateLeafletMarkers();
+}
+
+function renderKakaoMarkers() {
+  const kmaps = window.kakao.maps;
+  const container = document.getElementById("kakao-map");
+  if (!kakaoMap) {
+    kakaoMap = new kmaps.Map(container, { center: new kmaps.LatLng(37.5665, 126.978), level: 6 });
+  } else {
+    kakaoMap.relayout();
+  }
+  kakaoOverlays.forEach(o => o.setMap(null));
+  kakaoOverlays = [];
+  kakaoOverlaysById = {};
+  if (kakaoRouteLine) { kakaoRouteLine.setMap(null); kakaoRouteLine = null; }
+  if (kakaoInfoOverlay) { kakaoInfoOverlay.setMap(null); kakaoInfoOverlay = null; }
+
+  const dayPlaces = state.activeTrip.places.filter(p => p.day === state.activeTripDay);
+  document.getElementById("map-day-indicator").textContent = `Day ${state.activeTripDay} · ${dayPlaces.length}곳`;
+  if (!dayPlaces.length) return;
+
+  const bounds = new kmaps.LatLngBounds();
+  const path = [];
+  dayPlaces.forEach((place, index) => {
+    const pos = new kmaps.LatLng(place.lat, place.lng);
+    path.push(pos);
+    bounds.extend(pos);
+    let cls = "map-number-marker";
+    if (place.category === "hotel") cls += " hotel";
+    else if (place.category === "transit") cls += " transit";
+    const el = document.createElement("div");
+    el.className = `${cls} kakao-marker`;
+    el.textContent = String(index + 1);
+    el.addEventListener("click", () => {
+      showKakaoInfo(place, index);
+      focusPlaceCard(place.id);
+    });
+    const overlay = new kmaps.CustomOverlay({ position: pos, content: el, xAnchor: 0.5, yAnchor: 0.5, clickable: true, zIndex: 3 });
+    overlay.setMap(kakaoMap);
+    kakaoOverlays.push(overlay);
+    kakaoOverlaysById[place.id] = { overlay, place, index, pos };
+  });
+
+  if (path.length > 1) {
+    kakaoRouteLine = new kmaps.Polyline({
+      path,
+      strokeWeight: 3,
+      strokeColor: "#6366f1",
+      strokeOpacity: 0.8,
+      strokeStyle: "shortdash"
+    });
+    kakaoRouteLine.setMap(kakaoMap);
+  }
+  if (path.length === 1) {
+    kakaoMap.setCenter(path[0]);
+    kakaoMap.setLevel(4);
+  } else {
+    kakaoMap.setBounds(bounds, 40, 40, 40, 40);
+  }
+}
+
+function showKakaoInfo(place, index) {
+  const kmaps = window.kakao.maps;
+  if (kakaoInfoOverlay) kakaoInfoOverlay.setMap(null);
+  const box = document.createElement("div");
+  box.className = "kakao-info";
+  box.innerHTML = `<strong>${index + 1}. ${esc(place.name)}</strong><span>${esc(place.time)}</span>`;
+  kakaoInfoOverlay = new kmaps.CustomOverlay({
+    position: new kmaps.LatLng(place.lat, place.lng),
+    content: box,
+    xAnchor: 0.5,
+    yAnchor: 1.7,
+    zIndex: 5
+  });
+  kakaoInfoOverlay.setMap(kakaoMap);
+}
+
+function focusKakaoPlace(placeId) {
+  const item = kakaoOverlaysById[placeId];
+  if (!item || !kakaoMap) return;
+  kakaoMap.panTo(item.pos);
+  showKakaoInfo(item.place, item.index);
+}
+
+function updateLeafletMarkers() {
   if (!leafletMap || !mapMarkersGroup || !state.activeTrip) return;
 
   // Clear previous layers
@@ -2567,11 +2762,7 @@ function setupSeniorMode() {
       
       if (isShowing) {
         btnToggleMap.textContent = "지도 숨기기";
-        setTimeout(() => {
-          if (leafletMap) {
-            leafletMap.invalidateSize();
-          }
-        }, 150);
+        setTimeout(refreshMapSize, 150);
       } else {
         btnToggleMap.textContent = "지도 보기";
       }

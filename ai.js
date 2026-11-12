@@ -13,9 +13,9 @@
   function getSettings() {
     try {
       const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-      return { apiKey: s.apiKey || "", model: s.model || DEFAULT_MODEL };
+      return { apiKey: s.apiKey || "", model: s.model || DEFAULT_MODEL, kakaoKey: s.kakaoKey || "" };
     } catch (e) {
-      return { apiKey: "", model: DEFAULT_MODEL };
+      return { apiKey: "", model: DEFAULT_MODEL, kakaoKey: "" };
     }
   }
 
