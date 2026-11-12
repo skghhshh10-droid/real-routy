@@ -154,17 +154,6 @@
               </div>
             </div>
 
-            <div class="form-row">
-              <div class="form-group col">
-                <label for="input-budget">여행 예산</label>
-                <select id="input-budget">
-                  <option value="low">알뜰하게 (가성비)</option>
-                  <option value="medium" selected>적당하게</option>
-                  <option value="high">고급스럽게</option>
-                </select>
-              </div>
-            </div>
-
             <div class="form-group">
               <label>이동 수단</label>
               <div class="transport-picker" id="transport-picker" role="radiogroup">
@@ -185,7 +174,26 @@
                 <span class="style-tag" data-style="shopping">쇼핑/감성카페</span>
                 <span class="style-tag" data-style="cultural">역사/문화</span>
               </div>
+              <div class="spend-row">
+                <span class="spend-label">소비 성향</span>
+                <div class="spend-picker" id="spend-picker" role="radiogroup">
+                  <button type="button" class="spend-opt" data-budget="low" role="radio">가성비</button>
+                  <button type="button" class="spend-opt active" data-budget="medium" role="radio">적당히</button>
+                  <button type="button" class="spend-opt" data-budget="high" role="radio">고급</button>
+                </div>
+              </div>
             </div>
+
+            <details class="budget-details" id="budget-details">
+              <summary>예산 직접 정하기 <small class="label-hint">(선택 · 일행 전체, 여행 전체 기간)</small></summary>
+              <p class="budget-help">아는 항목만 채우세요. 채운 항목은 그 금액에 맞추고, 비운 항목은 소비 성향을 따라요.</p>
+              <div class="budget-grid">
+                <label class="budget-field"><span>식비</span><span class="budget-input-wrap"><input type="number" inputmode="numeric" min="0" step="1" id="input-budget-food" placeholder="—"><em>만원</em></span></label>
+                <label class="budget-field"><span>교통비</span><span class="budget-input-wrap"><input type="number" inputmode="numeric" min="0" step="1" id="input-budget-transport" placeholder="—"><em>만원</em></span></label>
+                <label class="budget-field"><span>숙박비</span><span class="budget-input-wrap"><input type="number" inputmode="numeric" min="0" step="1" id="input-budget-lodging" placeholder="—"><em>만원</em></span></label>
+              </div>
+              <div class="budget-sum" id="input-budget-sum"></div>
+            </details>
 
             <div class="form-group">
               <label for="input-request">추가 요청사항 (선택)</label>
@@ -445,6 +453,37 @@
     </div>
   </div>
 
+  <!-- Budget Edit Modal -->
+  <div id="budget-modal-overlay" class="modal-overlay">
+    <div class="place-edit-modal">
+      <div class="checklist-modal-header">
+        <h3>예산 정하기</h3>
+        <button class="btn-close-modal" id="btn-close-budget">✕</button>
+      </div>
+      <div class="place-edit-body">
+        <div class="form-group">
+          <label>소비 성향</label>
+          <div class="spend-picker" id="edit-spend-picker" role="radiogroup">
+            <button type="button" class="spend-opt" data-budget="low" role="radio">가성비</button>
+            <button type="button" class="spend-opt" data-budget="medium" role="radio">적당히</button>
+            <button type="button" class="spend-opt" data-budget="high" role="radio">고급</button>
+          </div>
+        </div>
+        <p class="budget-help">일행 전체·여행 전체 기간 금액이에요. 비워 두면 예산 비교 없이 예상 비용만 보여요.</p>
+        <div class="budget-grid">
+                <label class="budget-field"><span>식비</span><span class="budget-input-wrap"><input type="number" inputmode="numeric" min="0" step="1" id="edit-budget-food" placeholder="—"><em>만원</em></span></label>
+                <label class="budget-field"><span>교통비</span><span class="budget-input-wrap"><input type="number" inputmode="numeric" min="0" step="1" id="edit-budget-transport" placeholder="—"><em>만원</em></span></label>
+                <label class="budget-field"><span>숙박비</span><span class="budget-input-wrap"><input type="number" inputmode="numeric" min="0" step="1" id="edit-budget-lodging" placeholder="—"><em>만원</em></span></label>
+              </div>
+              <div class="budget-sum" id="edit-budget-sum"></div>
+      </div>
+      <div class="drawer-actions" style="padding: 0 20px 20px;">
+        <button class="btn btn-sm btn-secondary" id="btn-cancel-budget">취소</button>
+        <button class="btn btn-sm btn-primary" id="btn-confirm-budget">저장</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Place Edit Modal -->
   <div id="place-edit-modal-overlay" class="modal-overlay">
     <div class="place-edit-modal">
@@ -514,6 +553,10 @@
           <div class="form-group col col-narrow">
             <label for="edit-move-min">소요(분)</label>
             <input type="number" inputmode="numeric" id="edit-move-min" min="0" step="5">
+          </div>
+          <div class="form-group col col-narrow">
+            <label for="edit-move-cost">요금(원)</label>
+            <input type="number" inputmode="numeric" id="edit-move-cost" min="0" step="100">
           </div>
         </div>
         <label class="shift-check" id="edit-shift-wrap">

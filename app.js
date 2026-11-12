@@ -165,6 +165,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Settings, place editing, delegated place buttons
   setupSettings();
   setupPlaceEditModal();
+  setupBudgetModal();
   setupPlaceActionDelegation();
   setupTitleRename();
   renderSidebarTrips();
@@ -909,6 +910,9 @@ function setupPlannerForm() {
   if (!form) return;
   setupStyleTags();
 
+  setupSpendPicker("spend-picker");
+  setupBudgetInputs("input-budget", () => parseInt(document.getElementById("input-people").value, 10) || 1);
+
   document.querySelectorAll("#transport-picker .transport-opt").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll("#transport-picker .transport-opt").forEach(b => {
@@ -922,7 +926,9 @@ function setupPlannerForm() {
   const peopleSel = document.getElementById("input-people");
   partySel.addEventListener("change", () => {
     peopleSel.value = String(PARTY_PEOPLE[partySel.value] || 2);
+    updateBudgetSum("input-budget");
   });
+  peopleSel.addEventListener("change", () => updateBudgetSum("input-budget"));
 
   cancelBtn.addEventListener("click", () => {
     if (generateController) {
@@ -936,7 +942,8 @@ function setupPlannerForm() {
     const input = {
       destination: document.getElementById("input-destination").value.trim(),
       days: parseInt(document.getElementById("input-duration").value, 10),
-      budget: document.getElementById("input-budget").value,
+      budget: getSpendValue("spend-picker"),
+      budgetPlan: readBudgetInputs("input-budget"),
       party: partySel.value,
       people: parseInt(peopleSel.value, 10) || 1,
       transport: (document.querySelector("#transport-picker .transport-opt.active") || {}).dataset?.transport || "auto",
@@ -1006,6 +1013,7 @@ async function runGeneration(input) {
     destination: input.destination,
     days: input.days,
     budget: input.budget,
+    budgetPlan: input.budgetPlan,
     style: input.styles[0],
     styles: input.styles,
     party: input.party,
@@ -1067,7 +1075,7 @@ async function regenerateActiveTrip() {
   const ok = await uiConfirm("같은 조건으로 일정을 새로 만들까요? 지금 초안은 바뀝니다. (되돌리기 가능)", { okText: "다시 만들기" });
   if (!ok) return;
   const before = cloneTrip(t);
-  const input = Object.assign({}, t.genInput, { startDate: t.startDate, people: t.people, transport: t.transport || "auto" });
+  const input = Object.assign({}, t.genInput, { startDate: t.startDate, people: t.people, transport: t.transport || "auto", budget: t.budget, budgetPlan: t.budgetPlan });
   const fresh = await runGeneration(input);
   if (!fresh) return;
   fresh.id = t.id;
@@ -1484,7 +1492,13 @@ function setupPlaceEditModal() {
     const moveMode = document.getElementById("edit-move-mode").value;
     const moveMin = parseInt(document.getElementById("edit-move-min").value, 10);
     if (moveMode) {
-      place.move = { mode: moveMode, minutes: isFinite(moveMin) && moveMin > 0 ? moveMin : undefined, note: place.move && place.move.mode === moveMode ? place.move.note : "" };
+      const moveCost = parseInt(document.getElementById("edit-move-cost").value, 10);
+      place.move = {
+        mode: moveMode,
+        minutes: isFinite(moveMin) && moveMin > 0 ? moveMin : undefined,
+        cost: isFinite(moveCost) && moveCost >= 0 ? moveCost : undefined,
+        note: place.move && place.move.mode === moveMode ? place.move.note : ""
+      };
     } else {
       delete place.move;
     }
@@ -1541,6 +1555,7 @@ function openPlaceEdit(placeId) {
   document.getElementById("edit-place-price-unit").value = place.priceUnit === "group" ? "group" : "person";
   document.getElementById("edit-move-mode").value = place.move && place.move.mode ? place.move.mode : "";
   document.getElementById("edit-move-min").value = place.move && place.move.minutes ? place.move.minutes : "";
+  document.getElementById("edit-move-cost").value = place.move && place.move.cost !== undefined ? place.move.cost : "";
   document.getElementById("edit-place-desc").value = place.description || "";
   const daySel = document.getElementById("edit-place-day");
   daySel.innerHTML = "";
@@ -1650,7 +1665,6 @@ function renderTripMeta() {
       <label class="meta-item meta-transport" title="이동 수단">${window.icon(t.transport === "car" ? "car" : t.transport === "taxi" ? "taxi" : t.transport === "walk" ? "walk" : "bus", 16)}<select id="trip-transport-select" aria-label="이동 수단">
         ${Object.entries(TRANSPORT_LABELS).map(([k, v]) => `<option value="${k}" ${(t.transport || "auto") === k ? "selected" : ""}>${v}</option>`).join("")}
       </select></label>
-      <span class="meta-item meta-budget">${window.icon("wallet", 16)}${costLabel(t)}</span>
     </div>
     ${t.summary ? `<p class="trip-summary">${esc(t.summary)}</p>` : ""}
     ${!isActiveTripSaved() ? `
@@ -1661,8 +1675,11 @@ function renderTripMeta() {
           <button type="button" class="chip-btn chip-primary" id="btn-draft-save">${window.icon("check", 16)}내 일정에 저장</button>
         </div>
       </div>` : ""}
+    <details class="budget-card" id="budget-card" ${budgetCardOpen ? "open" : ""}>${budgetCardHtml(t)}</details>
     <div class="verify-status" id="verify-status"></div>
   `;
+  document.getElementById("btn-edit-budget").addEventListener("click", (e) => { e.preventDefault(); openBudgetModal(); });
+  document.getElementById("budget-card").addEventListener("toggle", (e) => { budgetCardOpen = e.target.open; });
   document.getElementById("trip-transport-select").addEventListener("change", (e) => changeTripTransport(e.target.value));
   const regen = document.getElementById("btn-regenerate");
   if (regen) regen.addEventListener("click", regenerateActiveTrip);
@@ -1785,6 +1802,139 @@ function setupTripMenu() {
   });
 }
 
+// --- 예산 ---
+let budgetCardOpen = false;
+const SPEND_LABELS = { low: "가성비", medium: "적당히", high: "고급" };
+const BUDGET_ITEMS = [["food", "식비"], ["transport", "교통비"], ["lodging", "숙박비"]];
+
+function setupSpendPicker(id) {
+  document.querySelectorAll(`#${id} .spend-opt`).forEach(btn => {
+    btn.addEventListener("click", () => setSpendValue(id, btn.dataset.budget));
+  });
+}
+function setSpendValue(id, value) {
+  document.querySelectorAll(`#${id} .spend-opt`).forEach(b => {
+    const on = b.dataset.budget === value;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+function getSpendValue(id) {
+  const b = document.querySelector(`#${id} .spend-opt.active`);
+  return b ? b.dataset.budget : "medium";
+}
+
+// 만원 단위 입력 → 원 단위 { food, transport, lodging } (빈 칸은 제외)
+function readBudgetInputs(prefix) {
+  const plan = {};
+  BUDGET_ITEMS.forEach(([k]) => {
+    const v = parseFloat(document.getElementById(`${prefix}-${k}`).value);
+    if (isFinite(v) && v > 0) plan[k] = Math.round(v * 10000);
+  });
+  return Object.keys(plan).length ? plan : undefined;
+}
+function fillBudgetInputs(prefix, plan) {
+  BUDGET_ITEMS.forEach(([k]) => {
+    const v = plan && plan[k] ? plan[k] / 10000 : "";
+    document.getElementById(`${prefix}-${k}`).value = v === "" ? "" : Math.round(v * 10) / 10;
+  });
+  updateBudgetSum(prefix);
+}
+let budgetPeopleGetters = {};
+function updateBudgetSum(prefix) {
+  const plan = readBudgetInputs(prefix);
+  const el = document.getElementById(`${prefix}-sum`);
+  if (!el) return;
+  if (!plan) {
+    el.textContent = "";
+    return;
+  }
+  const total = Object.values(plan).reduce((a, b) => a + b, 0);
+  const people = budgetPeopleGetters[prefix] ? budgetPeopleGetters[prefix]() : 1;
+  el.innerHTML = `합계 <strong>${formatManwon(total)}</strong>${people > 1 ? ` · 1인 ${formatManwon(total / people)}` : ""}`;
+}
+function setupBudgetInputs(prefix, getPeopleFn) {
+  budgetPeopleGetters[prefix] = getPeopleFn;
+  BUDGET_ITEMS.forEach(([k]) => {
+    document.getElementById(`${prefix}-${k}`).addEventListener("input", () => updateBudgetSum(prefix));
+  });
+}
+function formatManwon(won) {
+  const m = won / 10000;
+  return m >= 1 ? `${(Math.round(m * 10) / 10).toLocaleString()}만원` : formatWon(won);
+}
+
+function budgetCardHtml(t) {
+  const c = getCategoryCosts(t);
+  const plan = t.budgetPlan || {};
+  const hasPlan = BUDGET_ITEMS.some(([k]) => plan[k] > 0);
+  const row = (key, label, est, budget, note) => {
+    const over = budget > 0 && est > budget;
+    const pct = budget > 0 ? Math.min(100, Math.round((est / budget) * 100)) : 0;
+    return `
+      <div class="budget-row ${over ? "over" : ""}">
+        <span class="b-label">${label}</span>
+        <span class="b-values"><strong>${formatWon(est)}</strong>${budget > 0 ? `<span class="b-budget"> / ${formatWon(budget)}</span>` : ""}${note ? `<span class="b-note">${note}</span>` : ""}</span>
+        ${budget > 0 ? `<span class="b-bar"><span style="width:${pct}%"></span></span>` : ""}
+      </div>`;
+  };
+  const planTotal = BUDGET_ITEMS.reduce((s, [k]) => s + (plan[k] || 0), 0);
+  // 예산을 정한 항목끼리만 합계 비교
+  const estForPlanned = BUDGET_ITEMS.reduce((s, [k]) => s + (plan[k] > 0 ? c[k] : 0), 0);
+  const overAll = hasPlan && estForPlanned > planTotal;
+  const overItems = BUDGET_ITEMS.filter(([k]) => plan[k] > 0 && c[k] > plan[k]).map(([, label]) => label);
+  const status = !hasPlan ? ""
+    : overAll ? `<span class="b-status over">예산 ${formatWon(estForPlanned - planTotal)} 초과</span>`
+    : overItems.length ? `<span class="b-status warn">${overItems.join("·")} 초과</span>`
+    : `<span class="b-status ok">예산 안</span>`;
+  return `
+    <summary class="budget-head">
+      <span class="b-sum">${window.icon("wallet", 16)}<strong>${formatWon(c.total)}</strong>${c.people > 1 ? `<small>${c.people}명 · 1인 ${formatWon(c.total / c.people)}</small>` : ""}</span>
+      ${status}
+      <span class="b-chevron">${window.icon("down", 16)}</span>
+    </summary>
+    <div class="budget-sub">
+      <span>${SPEND_LABELS[t.budget] || "적당히"} · 일행 전체 예상</span>
+      <button type="button" class="link-btn budget-edit" id="btn-edit-budget">${hasPlan ? "예산 수정" : "예산 정하기"}</button>
+    </div>
+    ${row("food", "식비", c.food, plan.food)}
+    ${row("transport", "교통비", c.transport, plan.transport, c.transportIncomplete ? "이동 요금 정보 부족" : "")}
+    ${row("lodging", "숙박비", c.lodging, plan.lodging)}
+    ${c.other ? row("other", "기타 (입장료·쇼핑)", c.other, 0) : ""}
+
+    ${hasPlan ? `<div class="budget-foot">정한 예산 ${formatWon(planTotal)} 중 ${formatWon(estForPlanned)} 예상${estForPlanned > planTotal ? ` · <b>${formatWon(estForPlanned - planTotal)} 초과</b>` : ` · ${formatWon(planTotal - estForPlanned)} 여유`}${overItems.length && !overAll ? ` (${overItems.join("·")}는 항목 예산 초과)` : ""}</div>` : ""}
+  `;
+}
+
+function openBudgetModal() {
+  const t = state.activeTrip;
+  if (!t) return;
+  setSpendValue("edit-spend-picker", t.budget || "medium");
+  fillBudgetInputs("edit-budget", t.budgetPlan);
+  document.getElementById("budget-modal-overlay").classList.add("active");
+}
+
+function setupBudgetModal() {
+  const overlay = document.getElementById("budget-modal-overlay");
+  setupSpendPicker("edit-spend-picker");
+  setupBudgetInputs("edit-budget", () => getPeople(state.activeTrip));
+  const close = () => overlay.classList.remove("active");
+  document.getElementById("btn-close-budget").addEventListener("click", close);
+  document.getElementById("btn-cancel-budget").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.getElementById("btn-confirm-budget").addEventListener("click", () => {
+    const t = state.activeTrip;
+    if (!t) return close();
+    withUndo("예산을 저장했어요.", () => {
+      t.budget = getSpendValue("edit-spend-picker");
+      const plan = readBudgetInputs("edit-budget");
+      if (plan) t.budgetPlan = plan;
+      else delete t.budgetPlan;
+    });
+    close();
+  });
+}
+
 // 여행 이동 수단 변경 → (AI 키가 있으면) 이동 방법·동선 다시 짜기
 async function changeTripTransport(value) {
   const t = state.activeTrip;
@@ -1809,7 +1959,7 @@ async function changeTripTransport(value) {
 function moveConnectorHtml(move) {
   if (!move || !move.mode) return "";
   const label = MOVE_LABELS[move.mode] || "이동";
-  const mins = move.minutes ? ` ${move.minutes}분` : "";
+  const mins = (move.minutes ? ` ${move.minutes}분` : "") + (move.cost ? ` · ${formatWon(move.cost)}${GROUP_MOVE_MODES.includes(move.mode) ? "" : "/인"}` : "");
   return `<div class="move-connector">${window.icon(MOVE_ICONS[move.mode] || "walk", 15)}<span class="move-main">${label}${mins}</span>${move.note ? `<span class="move-note">${esc(move.note)}</span>` : ""}</div>`;
 }
 
@@ -2217,20 +2367,45 @@ function getPeople(trip) {
   return Math.max(1, parseInt(trip && trip.people, 10) || 1);
 }
 
-function getTripCost(trip, day) {
+// 이동 요금: 택시·자가용·렌터카는 일행 전체, 그 외는 1인 요금
+const GROUP_MOVE_MODES = ["car", "taxi"];
+
+function placeGroupCost(p, people) {
+  const v = p.price || 0;
+  return p.priceUnit === "group" ? v : v * people;
+}
+
+function moveGroupCost(p, people) {
+  if (!p.move || !p.move.cost) return 0;
+  return GROUP_MOVE_MODES.includes(p.move.mode) ? p.move.cost : p.move.cost * people;
+}
+
+const COST_CATEGORY = { restaurant: "food", cafe: "food", hotel: "lodging", transit: "transport" };
+
+// 항목별 예상 비용 (일행 전체 금액)
+function getCategoryCosts(trip, day) {
   const people = getPeople(trip);
-  let total = 0, per = 0;
+  const out = { food: 0, transport: 0, lodging: 0, other: 0 };
+  let movesWithoutCost = 0, moves = 0;
   trip.places.filter(p => !day || p.day === day).forEach(p => {
-    const v = p.price || 0;
-    if (p.priceUnit === "group") {
-      total += v;
-      per += v / people;
-    } else {
-      total += v * people;
-      per += v;
+    out[COST_CATEGORY[p.category] || "other"] += placeGroupCost(p, people);
+    if (p.move) {
+      moves++;
+      if (p.move.cost === undefined && !["walk", "bike"].includes(p.move.mode)) movesWithoutCost++;
+      out.transport += moveGroupCost(p, people);
     }
   });
-  return { total: Math.round(total), perPerson: Math.round(per), people };
+  Object.keys(out).forEach(k => { out[k] = Math.round(out[k]); });
+  out.total = out.food + out.transport + out.lodging + out.other;
+  out.people = people;
+  // 이동 정보가 없거나 요금이 빠진 이동이 많으면 교통비가 과소 추정됨
+  out.transportIncomplete = moves === 0 || movesWithoutCost > moves / 2;
+  return out;
+}
+
+function getTripCost(trip, day) {
+  const c = getCategoryCosts(trip, day);
+  return { total: c.total, perPerson: Math.round(c.total / c.people), people: c.people };
 }
 
 function getTripTotal(trip) {

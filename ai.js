@@ -77,7 +77,7 @@
       "description": "무엇을 하는지·팁을 한 문장으로 짧게 (한국어)",
       "price": 15000,
       "priceUnit": "person 또는 group",
-      "move": { "mode": "walk | bus | subway | train | car | taxi | bike | ferry | flight 중 하나", "minutes": 15, "note": "직전 장소에서 여기까지 가는 방법 (예: 2호선 강남역→홍대입구역)" }
+      "move": { "mode": "walk | bus | subway | train | car | taxi | bike | ferry | flight 중 하나", "minutes": 15, "cost": 1500, "note": "직전 장소에서 여기까지 가는 방법 (예: 2호선 강남역→홍대입구역)" }
     }
   ],
   "tips": ["이 여행에 맞는 준비물/주의사항 3~6개 (짧게)"]
@@ -90,7 +90,17 @@
 - 하루에 4~7곳. 이동 동선이 짧도록 가까운 곳끼리 묶으세요.
 - 숙박이 있는 날(마지막 날 제외)은 그날 마지막에 숙소(category "hotel")를 넣으세요.
 - 장거리 이동(공항, 기차 등)은 category "transit"으로 넣으세요.
-- move는 "직전 장소에서 이 장소까지" 이동 방법입니다. 각 날의 첫 장소는 move를 생략하세요. minutes는 예상 소요 시간(분).`;
+- move는 "직전 장소에서 이 장소까지" 이동 방법입니다. 각 날의 첫 장소는 move를 생략하세요. minutes는 예상 소요 시간(분).
+- move.cost는 이동 요금(원, 정수). 택시·자가용(유류비·통행료·주차비)·렌터카는 일행 전체 금액, 버스·지하철·기차·배·비행기는 1인 요금, 도보·자전거는 0.`;
+
+  // 항목별 예산(원, 일행 전체·여행 전체 기간) → 프롬프트 문장
+  function budgetPlanLine(plan, people) {
+    if (!plan) return "";
+    const names = { food: "식비", transport: "교통비", lodging: "숙박비" };
+    const parts = Object.keys(names).filter(k => plan[k] > 0).map(k => `${names[k]} ${Math.round(plan[k]).toLocaleString()}원`);
+    if (!parts.length) return "";
+    return `- 예산(일행 ${people || 1}명 전체, 여행 전체 기간): ${parts.join(", ")}. 금액이 정해진 항목은 그 안에 맞추고(숙박비는 모든 숙박일 합계), 정해지지 않은 항목은 소비 성향을 따르세요.`;
+  }
 
   function buildCreatePrompt(input) {
     const styles = (input.styles || []).map(s => STYLE_LABELS[s] || s).join(", ") || "자유";
@@ -101,7 +111,8 @@
       input.startDate ? `- 출발일: ${input.startDate} (계절/요일/휴무일을 고려하세요)` : "",
       input.party ? `- 동행: ${input.party}${input.people ? ` (총 ${input.people}명)` : ""}` : "",
       `- 이동 수단: ${TRANSPORT_PROMPT[input.transport] || TRANSPORT_PROMPT.auto}`,
-      `- 예산: ${BUDGET_LABELS[input.budget] || "보통"}`,
+      `- 소비 성향: ${BUDGET_LABELS[input.budget] || "보통"}`,
+      budgetPlanLine(input.budgetPlan, input.people),
       `- 선호 스타일: ${styles}`,
       input.request ? `- 추가 요청: ${input.request}` : "",
       OUTPUT_SPEC
@@ -116,6 +127,8 @@
       days: trip.days,
       people: trip.people || null,
       transport: TRANSPORT_PROMPT[trip.transport] || TRANSPORT_PROMPT.auto,
+      spending: BUDGET_LABELS[trip.budget] || "보통",
+      budgetPlan: budgetPlanLine(trip.budgetPlan, trip.people) || null,
       startDate: trip.startDate || null,
       places: trip.places.map(p => ({
         day: p.day, time: p.time, name: p.name, searchName: p.searchName, category: p.category,
@@ -333,9 +346,11 @@
     const mode = MOVE_MODES.includes(m.mode) ? m.mode : null;
     const minutes = parseInt(m.minutes, 10);
     if (!mode && !isFinite(minutes)) return undefined;
+    const cost = parseInt(m.cost, 10);
     return {
       mode: mode || "walk",
       minutes: isFinite(minutes) && minutes >= 0 ? minutes : undefined,
+      cost: isFinite(cost) && cost >= 0 ? cost : undefined,
       note: m.note ? String(m.note).trim().slice(0, 80) : ""
     };
   }
@@ -442,8 +457,8 @@
 
   async function encodeTrip(trip) {
     const slim = {
-      t: trip.title, d: trip.destination, n: trip.days, b: trip.budget, s: trip.startDate || "", c: trip.people || 1, m: trip.transport || "auto",
-      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0, p.move ? [p.move.mode, p.move.minutes || 0, p.move.note || ""] : 0])
+      t: trip.title, d: trip.destination, n: trip.days, b: trip.budget, s: trip.startDate || "", c: trip.people || 1, m: trip.transport || "auto", bp: trip.budgetPlan || 0,
+      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0, p.move ? [p.move.mode, p.move.minutes || 0, p.move.note || "", p.move.cost === undefined ? -1 : p.move.cost] : 0])
     };
     const bytes = new TextEncoder().encode(JSON.stringify(slim));
     if (typeof CompressionStream !== "undefined") {
@@ -460,11 +475,11 @@
     const stamp = Date.now();
     return {
       id: `shared-${stamp}`,
-      title: o.t, destination: o.d, days: o.n, budget: o.b || "medium", startDate: o.s || "", people: o.c || 1, transport: o.m || "auto",
+      title: o.t, destination: o.d, days: o.n, budget: o.b || "medium", startDate: o.s || "", people: o.c || 1, transport: o.m || "auto", budgetPlan: o.bp || undefined,
       places: o.p.map((a, i) => ({
         day: a[0], time: a[1], name: a[2], category: CATEGORIES.includes(a[3]) ? a[3] : "sightseeing",
         lat: a[4], lng: a[5], description: a[6], price: a[7], priceUnit: a[8] ? "group" : (a[8] === 0 ? "person" : undefined),
-        move: Array.isArray(a[9]) ? normalizeMove({ mode: a[9][0], minutes: a[9][1], note: a[9][2] }) : undefined,
+        move: Array.isArray(a[9]) ? normalizeMove({ mode: a[9][0], minutes: a[9][1], note: a[9][2], cost: a[9][3] >= 0 ? a[9][3] : undefined }) : undefined,
         id: `sh-${stamp}-${i}`
       }))
     };
