@@ -734,3 +734,26 @@ input, select, textarea {
 .ofm-popup .maplibregl-popup-content { padding: 0; background: transparent; box-shadow: none; }
 .ofm-popup .maplibregl-popup-tip { display: none; }
 .maplibregl-ctrl-attrib { font-size: 10px; }
+
+/* ---------- 이동 수단 ---------- */
+.transport-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.transport-opt {
+  min-height: 44px; padding: 0 16px; border-radius: 22px; border: 1px solid var(--border-color);
+  background: var(--card-bg-solid); color: var(--text-color); font-size: var(--fs-sm); font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.transport-opt.active { background: var(--primary-solid); border-color: transparent; color: #fff; }
+
+.meta-transport select {
+  border: 1px solid var(--border-color); background: var(--card-bg-solid); color: var(--text-color);
+  border-radius: 8px; height: 34px; padding: 0 6px; font-size: 15px !important; font-family: inherit;
+}
+
+.move-connector {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: -2px 0 4px 18px; padding: 4px 10px; width: fit-content; max-width: calc(100% - 18px);
+  border-radius: 10px; background: var(--primary-light); color: var(--primary-solid);
+  font-size: var(--fs-xs); font-weight: 600;
+}
+.move-connector .move-note { color: var(--text-muted); font-weight: 500; }
+[data-theme="dark"] .move-connector { color: #a5b4fc; }
