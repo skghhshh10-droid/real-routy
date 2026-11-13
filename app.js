@@ -630,7 +630,9 @@ function setupSettings() {
   document.getElementById("btn-save-kakao").addEventListener("click", () => {
     const naverKey = naverInput.value.trim();
     const kakaoKey = kakaoInput.value.trim();
-    window.RoutyAI.saveSettings({ naverKey, kakaoKey });
+    const placesKey = document.getElementById("setting-places-key").value.trim();
+    window.RoutyAI.saveSettings({ naverKey, kakaoKey, placesKey });
+    topCache.clear();
     failedEngines.delete("naver");
     failedEngines.delete("kakao");
     kakaoStatus.className = "settings-status ok";
@@ -723,6 +725,9 @@ function renderSettingsTab() {
   document.getElementById("setting-model").value = s.model;
   document.getElementById("setting-kakao-key").value = s.kakaoKey || "";
   document.getElementById("setting-naver-key").value = s.naverKey || "";
+  document.getElementById("setting-places-key").value = s.placesKey || "";
+  document.getElementById("places-limit").textContent = window.RoutyAI.PLACES_DAILY_LIMIT;
+  document.getElementById("places-usage").textContent = s.placesKey ? `(오늘 ${window.RoutyAI.placesUsage().n}회 사용)` : "";
   const statusEl = document.getElementById("settings-status");
   if (statusEl && !statusEl.textContent) {
     statusEl.textContent = s.apiKey ? "API 키가 등록되어 있습니다." : "";
@@ -1645,6 +1650,13 @@ function setupPlaceActionDelegation() {
     else if (action === "alts") toggleAlternatives(id);
     else if (action === "suggest") suggestAlternatives(id, btn);
     else if (action === "pick") pickAlternative(id, parseInt(btn.getAttribute("data-alt"), 10));
+    else if (action === "top5") toggleTopPanel(id, btn);
+    else if (action === "topsort") setTopSort(btn.getAttribute("data-sort"));
+    else if (action === "toppick") pickTopPlace(id, btn.getAttribute("data-pid"));
+    else if (action === "topmap") {
+      const item = findTopItem(btn.getAttribute("data-pid"));
+      if (item) window.open(item.mapsUri || getPlaceLinks(Object.assign({ category: "restaurant" }, item)).mapUrl, "_blank", "noopener");
+    }
     else if (action === "altmap") {
       const alt = (place.alternatives || [])[parseInt(btn.getAttribute("data-alt"), 10)];
       if (alt) window.open(getPlaceLinks(Object.assign({ category: "restaurant" }, alt)).mapUrl, "_blank", "noopener");
@@ -2093,6 +2105,146 @@ async function suggestAlternatives(placeId, btn) {
     btn.innerHTML = `${window.icon("sparkles", 16)}후보 추천받기`;
     showToast(e.message || "식당 후보를 찾지 못했어요.", 4000);
   }
+}
+
+
+// --- 주변 TOP 5 (Google Places 별점·리뷰수) ---
+// 별점/리뷰수는 저장하지 않고 메모리에만 둔다 (Google 약관). 고른 식당은 place id만 기록.
+const topPanel = { placeId: null, sort: "rating", items: [], loading: false, error: "" };
+const topCache = new Map(); // "lat,lng,type" → items (이번 실행 동안만)
+const TOP_MIN_REVIEWS = 30;
+
+function topChipHtml(place) {
+  if (!["restaurant", "cafe"].includes(place.category)) return "";
+  if (!window.RoutyAI.hasPlacesKey() || typeof place.lat !== "number") return "";
+  const open = topPanel.placeId === place.id;
+  return `<button class="chip-btn chip-top ${open ? "on" : ""}" data-action="top5" data-id="${esc(place.id)}">${window.icon("star", 16)}${open ? "TOP 5 접기" : "주변 TOP 5"}</button>`;
+}
+
+function sortedTopItems() {
+  const items = topPanel.items.slice();
+  if (topPanel.sort === "count") {
+    return items.sort((a, b) => b.count - a.count || b.rating - a.rating).slice(0, 5);
+  }
+  // 별점순: 리뷰가 너무 적은 곳(별점 5.0에 리뷰 2개 같은)은 빼되, 부족하면 기준을 낮춘다
+  let pool = items.filter(i => i.count >= TOP_MIN_REVIEWS);
+  if (pool.length < 5) pool = items.filter(i => i.count >= 5);
+  if (pool.length < 5) pool = items;
+  return pool.sort((a, b) => b.rating - a.rating || b.count - a.count).slice(0, 5);
+}
+
+function findTopItem(pid) {
+  return topPanel.items.find(i => i.id === pid);
+}
+
+function topPanelHtml(place) {
+  const id = esc(place.id);
+  const head = `
+    <div class="top-head">
+      <div class="seg" role="tablist">
+        <button class="seg-btn ${topPanel.sort === "rating" ? "on" : ""}" data-action="topsort" data-sort="rating" data-id="${id}">별점순</button>
+        <button class="seg-btn ${topPanel.sort === "count" ? "on" : ""}" data-action="topsort" data-sort="count" data-id="${id}">리뷰수순</button>
+      </div>
+      <span class="top-attr">반경 1km · Google 지도</span>
+    </div>`;
+  let body;
+  if (topPanel.loading) body = `<div class="top-empty">주변 ${place.category === "cafe" ? "카페" : "식당"}를 찾는 중…</div>`;
+  else if (topPanel.error) body = `<div class="top-empty">${esc(topPanel.error)}</div>`;
+  else {
+    const list = sortedTopItems();
+    body = list.length ? list.map((it, i) => {
+      const current = it.id === place.googlePlaceId;
+      return `
+        <div class="top-item ${current ? "is-current" : ""}">
+          <span class="top-rank">${i + 1}</span>
+          <div class="alt-body">
+            <strong>${esc(it.name)}</strong>
+            <span class="top-meta"><b>★ ${it.rating ? it.rating.toFixed(1) : "-"}</b> 리뷰 ${it.count.toLocaleString("ko-KR")}${it.typeLabel ? ` · ${esc(it.typeLabel)}` : ""}${place.lat ? ` · ${formatDistance(distanceMeters(place, it))}` : ""}</span>
+          </div>
+          <div class="alt-actions">
+            <button class="chip-btn chip-icon" data-action="topmap" data-pid="${esc(it.id)}" data-id="${id}" aria-label="Google 지도에서 보기">${window.icon("map", 16)}</button>
+            ${current ? `<span class="top-current">지금 일정</span>` : `<button class="chip-btn chip-primary" data-action="toppick" data-pid="${esc(it.id)}" data-id="${id}">이걸로</button>`}
+          </div>
+        </div>`;
+    }).join("") : `<div class="top-empty">주변 1km 안에서 찾지 못했어요.</div>`;
+  }
+  return `<div class="top-panel">${head}<div class="top-list">${body}</div></div>`;
+}
+
+function distanceMeters(a, b) {
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function formatDistance(m) {
+  return m < 1000 ? `${Math.round(m / 10) * 10}m` : `${(m / 1000).toFixed(1)}km`;
+}
+
+async function toggleTopPanel(placeId) {
+  if (topPanel.placeId === placeId) {
+    topPanel.placeId = null;
+    renderTimeline();
+    return;
+  }
+  const trip = state.activeTrip;
+  const place = trip.places.find(p => p.id === placeId);
+  if (!place) return;
+  // 검색 기준은 처음 연 위치로 고정 (식당을 바꿔도 같은 목록을 다시 쓰도록)
+  const center = place.topCenter || { lat: place.lat, lng: place.lng };
+  const type = place.category === "cafe" ? "cafe" : "restaurant";
+  const cacheKey = `${center.lat.toFixed(4)},${center.lng.toFixed(4)},${type}`;
+  Object.assign(topPanel, { placeId, items: [], error: "", loading: !topCache.has(cacheKey) });
+  if (topCache.has(cacheKey)) {
+    topPanel.items = topCache.get(cacheKey);
+    renderTimeline();
+    return;
+  }
+  renderTimeline();
+  try {
+    const items = await window.RoutyAI.placesNearby(center.lat, center.lng, { type });
+    topCache.set(cacheKey, items);
+    if (!place.topCenter) place.topCenter = center;
+    if (topPanel.placeId !== placeId || state.activeTrip !== trip) return;
+    topPanel.items = items;
+  } catch (e) {
+    if (topPanel.placeId !== placeId) return;
+    topPanel.error = e.message || "주변 식당을 불러오지 못했어요.";
+  }
+  topPanel.loading = false;
+  renderTimeline();
+}
+
+function setTopSort(sort) {
+  topPanel.sort = sort === "count" ? "count" : "rating";
+  renderTimeline();
+}
+
+function pickTopPlace(placeId, pid) {
+  const place = state.activeTrip.places.find(p => p.id === placeId);
+  const it = findTopItem(pid);
+  if (!place || !it) return;
+  withUndo(`"${it.name}"(으)로 바꿨어요. 원래 식당은 후보에 남아 있어요.`, () => {
+    if (place.category === "restaurant" || place.category === "cafe") {
+      const prev = {
+        name: place.name, searchName: place.searchName || "", lat: place.lat, lng: place.lng,
+        description: place.description || "", price: place.price
+      };
+      const others = (place.alternatives || []).filter(a => a.name !== it.name);
+      place.alternatives = [prev].concat(others).slice(0, 5);
+    }
+    if (!place.topCenter) place.topCenter = { lat: place.lat, lng: place.lng };
+    place.name = it.name;
+    place.searchName = "";
+    place.lat = it.lat;
+    place.lng = it.lng;
+    place.description = it.typeLabel ? `${it.typeLabel} · Google 지도에서 고른 곳` : "Google 지도에서 고른 곳";
+    place.googlePlaceId = it.id;
+    place.coordMissing = false;
+    place.coordFixed = false;
+    place.coordChecked = true; // Google 좌표라 다시 보정할 필요 없음
+  });
 }
 
 // AI가 바꾼 장소 표시용
@@ -2640,6 +2792,7 @@ function renderTimeline() {
           ${isTransit ? "" : `<button class="chip-btn" data-action="search" data-id="${id}">${window.icon("search", 16)}${searchLabel}</button>`}
           <button class="chip-btn" data-action="edit" data-id="${id}">${window.icon("pencil", 16)}편집</button>
           ${altChipHtml(place)}
+          ${topChipHtml(place)}
           <span class="edit-only-actions">
             <button class="chip-btn chip-icon" data-action="up" data-id="${id}" ${index === 0 ? "disabled" : ""} aria-label="위로">${window.icon("up", 18)}</button>
             <button class="chip-btn chip-icon" data-action="down" data-id="${id}" ${index === dayPlaces.length - 1 ? "disabled" : ""} aria-label="아래로">${window.icon("down", 18)}</button>
@@ -2647,6 +2800,7 @@ function renderTimeline() {
           </span>
         </div>
         ${expandedAlts.has(place.id) ? altListHtml(place) : ""}
+        ${topPanel.placeId === place.id ? topPanelHtml(place) : ""}
       `;
     }
 

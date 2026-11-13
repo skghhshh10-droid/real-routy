@@ -827,3 +827,25 @@ input, select, textarea {
 .alt-body em { font-style: normal; font-size: var(--fs-xs); color: var(--primary-solid); font-weight: 700; }
 .alt-actions { display: flex; gap: 6px; flex-shrink: 0; }
 [data-theme="dark"] .chip-btn.chip-alt, [data-theme="dark"] .chip-btn.chip-alt .ic { color: #fbbf24; }
+
+/* ---------- 주변 TOP 5 (Google Places) ---------- */
+.chip-btn.chip-top { color: #a16207; border-color: rgba(234, 179, 8, 0.5); }
+.chip-btn.chip-top .ic { color: #eab308; fill: #eab308; }
+.chip-btn.chip-top.on { background: rgba(234, 179, 8, 0.12); }
+.top-panel { margin-top: 8px; border: 1px solid rgba(234, 179, 8, 0.4); border-radius: 14px; padding: 10px; background: rgba(234, 179, 8, 0.04); }
+.top-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--bg-secondary, rgba(0,0,0,0.05)); border-radius: 10px; padding: 3px; }
+.seg-btn { border: 0; background: transparent; padding: 8px 14px; min-height: 36px; border-radius: 8px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-muted); cursor: pointer; }
+.seg-btn.on { background: var(--surface, #fff); color: var(--text-main, inherit); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.top-attr { font-size: var(--fs-xs); color: var(--text-muted); }
+.top-list { display: flex; flex-direction: column; gap: 6px; }
+.top-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: var(--surface, rgba(255,255,255,0.6)); }
+.top-item.is-current { outline: 2px solid rgba(234, 179, 8, 0.6); }
+.top-rank { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: rgba(234, 179, 8, 0.18); color: #a16207; flex-shrink: 0; }
+.top-meta { font-size: var(--fs-sm); color: var(--text-muted); }
+.top-meta b { color: #ca8a04; }
+.top-current { font-size: var(--fs-xs); font-weight: 700; color: #a16207; padding: 0 6px; }
+.top-empty { padding: 14px 6px; font-size: var(--fs-sm); color: var(--text-muted); text-align: center; }
+[data-theme="dark"] .chip-btn.chip-top { color: #facc15; }
+[data-theme="dark"] .seg-btn.on { background: rgba(255,255,255,0.12); }
+[data-theme="dark"] .top-item { background: rgba(255,255,255,0.04); }

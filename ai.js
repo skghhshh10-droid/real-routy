@@ -21,6 +21,11 @@
     walk: "도보 위주. 걸어서 이동 가능한 범위로 촘촘하게, 먼 곳만 대중교통"
   };
 
+  // Google Places 키 (웹사이트 제한 걸린 공개용 키만 여기에 넣기)
+  const DEFAULT_PLACES_KEY = "";
+  const PLACES_DAILY_LIMIT = 40;
+  const PLACES_USAGE_KEY = "routy_places_usage";
+
   // ---------- 설정 ----------
   function getSettings() {
     try {
@@ -29,10 +34,11 @@
         apiKey: s.apiKey || "",
         model: s.model || DEFAULT_MODEL,
         kakaoKey: s.kakaoKey || "",
-        naverKey: s.naverKey === undefined ? DEFAULT_NAVER_KEY : s.naverKey
+        naverKey: s.naverKey === undefined ? DEFAULT_NAVER_KEY : s.naverKey,
+        placesKey: s.placesKey === undefined ? DEFAULT_PLACES_KEY : s.placesKey
       };
     } catch (e) {
-      return { apiKey: "", model: DEFAULT_MODEL, kakaoKey: "", naverKey: DEFAULT_NAVER_KEY };
+      return { apiKey: "", model: DEFAULT_MODEL, kakaoKey: "", naverKey: DEFAULT_NAVER_KEY, placesKey: DEFAULT_PLACES_KEY };
     }
   }
 
@@ -370,6 +376,85 @@
   }
 
   // 특정 식사 자리에 대한 식당 후보 추천 (기존 일정용)
+
+  // ---------- Google Places: 주변 식당 별점·리뷰수 ----------
+  // 별점/리뷰수는 Google 약관상 저장하면 안 되므로 호출 결과는 메모리에서만 쓴다.
+  function hasPlacesKey() {
+    return !!getSettings().placesKey;
+  }
+
+  function placesUsage() {
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const u = JSON.parse(localStorage.getItem(PLACES_USAGE_KEY) || "{}");
+      return u.date === today ? { date: today, n: u.n || 0 } : { date: today, n: 0 };
+    } catch (e) {
+      return { date: today, n: 0 };
+    }
+  }
+
+  function countPlacesCall() {
+    const u = placesUsage();
+    u.n += 1;
+    try { localStorage.setItem(PLACES_USAGE_KEY, JSON.stringify(u)); } catch (e) {}
+  }
+
+  async function placesNearby(lat, lng, opts = {}) {
+    const key = getSettings().placesKey;
+    if (!key) throw new Error("설정에서 Google Places 키를 넣어야 쓸 수 있어요.");
+    if (typeof lat !== "number" || typeof lng !== "number") throw new Error("이 장소는 위치 정보가 없어 주변을 찾을 수 없어요.");
+    if (placesUsage().n >= PLACES_DAILY_LIMIT) {
+      throw new Error(`오늘 조회 한도(${PLACES_DAILY_LIMIT}회)를 다 썼어요. 내일 다시 쓸 수 있어요.`);
+    }
+    const body = {
+      includedTypes: [opts.type === "cafe" ? "cafe" : "restaurant"],
+      maxResultCount: 20,
+      rankPreference: "POPULARITY",
+      languageCode: "ko",
+      locationRestriction: {
+        circle: { center: { latitude: lat, longitude: lng }, radius: opts.radius || 1000 }
+      }
+    };
+    countPlacesCall();
+    let res;
+    try {
+      res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.rating,places.userRatingCount,places.primaryTypeDisplayName,places.googleMapsUri,places.businessStatus"
+        },
+        body: JSON.stringify(body),
+        signal: opts.signal
+      });
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      throw new Error("Google Places에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.");
+    }
+    if (!res.ok) {
+      let msg = "";
+      try { msg = ((await res.json()).error || {}).message || ""; } catch (e) {}
+      if (res.status === 403) throw new Error("Google Places 키가 거부됐어요. 키의 웹사이트 제한과 'Places API (New)' 사용 설정을 확인해 주세요.");
+      if (res.status === 429) throw new Error("Google Places 하루 할당량을 다 썼어요. 내일 다시 시도해 주세요.");
+      throw new Error(`Google Places 오류 (${res.status})${msg ? ": " + msg : ""}`);
+    }
+    const data = await res.json();
+    return (data.places || [])
+      .filter(p => !p.businessStatus || p.businessStatus === "OPERATIONAL")
+      .map(p => ({
+        id: p.id,
+        name: (p.displayName && p.displayName.text) || "",
+        lat: p.location && p.location.latitude,
+        lng: p.location && p.location.longitude,
+        rating: typeof p.rating === "number" ? p.rating : 0,
+        count: p.userRatingCount || 0,
+        typeLabel: (p.primaryTypeDisplayName && p.primaryTypeDisplayName.text) || "",
+        mapsUri: p.googleMapsUri || ""
+      }))
+      .filter(p => p.name && typeof p.lat === "number");
+  }
+
   async function suggestRestaurants(trip, place, opts = {}) {
     const dayPlaces = trip.places.filter(p => p.day === place.day).map(p => `${p.time} ${p.name}`).join(" / ");
     const prompt = [
@@ -540,6 +625,7 @@
     DEFAULT_MODEL,
     getSettings, saveSettings, hasApiKey,
     generateTrip, refineTrip, testApiKey,
-    searchPlaces, encodeTrip, decodeTrip, normalizeTime, normalizeMove, MOVE_MODES, suggestRestaurants
+    searchPlaces, encodeTrip, decodeTrip, normalizeTime, normalizeMove, MOVE_MODES, suggestRestaurants,
+    hasPlacesKey, placesNearby, placesUsage, PLACES_DAILY_LIMIT
   };
 })();

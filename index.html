@@ -375,6 +375,11 @@
               <label for="setting-kakao-key">카카오 JavaScript 키 (선택)</label>
               <input type="text" id="setting-kakao-key" placeholder="예: 1a2b3c..." autocomplete="off" spellcheck="false">
             </div>
+            <div class="form-group">
+              <label for="setting-places-key">Google Places API 키 (식당 별점 TOP 5)</label>
+              <input type="text" id="setting-places-key" placeholder="AIza..." autocomplete="off" spellcheck="false">
+              <small class="settings-hint">식당·카페 카드에 '주변 TOP 5'(별점순·리뷰수순)가 생겨요. 웹사이트 제한을 건 키만 넣고, 하루 <span id="places-limit">40</span>회까지만 조회해요. <span id="places-usage"></span></small>
+            </div>
             <div class="settings-actions">
               <button class="btn btn-sm btn-primary" id="btn-save-kakao">저장</button>
             </div>
