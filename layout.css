@@ -756,6 +756,15 @@ input, select, textarea {
   font-size: var(--fs-xs); font-weight: 600;
 }
 .move-connector .move-note { color: var(--text-muted); font-weight: 500; }
+.move-route {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 2px;
+  min-height: 32px; padding: 0 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(3, 199, 90, 0.45); background: rgba(3, 199, 90, 0.08);
+  color: #02a24a; font: inherit; font-weight: 700; font-size: var(--fs-xs);
+}
+.move-route .ic { color: #03c75a; }
+.move-route:active { transform: scale(0.97); }
+[data-theme="dark"] .move-route { color: #4ade80; }
 [data-theme="dark"] .move-connector { color: #a5b4fc; }
 
 /* ---------- 예산 ---------- */

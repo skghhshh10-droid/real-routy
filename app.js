@@ -1650,6 +1650,10 @@ function setupPlaceActionDelegation() {
     else if (action === "alts") toggleAlternatives(id);
     else if (action === "suggest") suggestAlternatives(id, btn);
     else if (action === "pick") pickAlternative(id, parseInt(btn.getAttribute("data-alt"), 10));
+    else if (action === "naviroute") {
+      const from = state.activeTrip.places.find(p => p.id === btn.getAttribute("data-from"));
+      if (from) openNaverRoute(from, place);
+    }
     else if (action === "top5") toggleTopPanel(id, btn);
     else if (action === "topsort") setTopSort(btn.getAttribute("data-sort"));
     else if (action === "toppick") pickTopPlace(id, btn.getAttribute("data-pid"));
@@ -1975,11 +1979,72 @@ async function changeTripTransport(value) {
   document.getElementById("ai-refine-form").requestSubmit();
 }
 
-function moveConnectorHtml(move) {
-  if (!move || !move.mode) return "";
+function moveConnectorHtml(move, from, to) {
+  const routeBtn = from && to ? naverRouteBtnHtml(from, to, move && move.mode) : "";
+  if (!move || !move.mode) return routeBtn ? `<div class="move-connector">${routeBtn}</div>` : "";
   const label = MOVE_LABELS[move.mode] || "이동";
   const mins = (move.minutes ? ` ${move.minutes}분` : "") + (move.cost ? ` · ${formatWon(move.cost)}${GROUP_MOVE_MODES.includes(move.mode) ? "" : "/인"}` : "");
-  return `<div class="move-connector">${window.icon(MOVE_ICONS[move.mode] || "walk", 15)}<span class="move-main">${label}${mins}</span>${move.note ? `<span class="move-note">${esc(move.note)}</span>` : ""}</div>`;
+  return `<div class="move-connector">${window.icon(MOVE_ICONS[move.mode] || "walk", 15)}<span class="move-main">${label}${mins}</span>${move.note ? `<span class="move-note">${esc(move.note)}</span>` : ""}${routeBtn}</div>`;
+}
+
+// --- 국내 이동: 네이버 지도 앱 길찾기 (실제 버스 번호·정류장·실시간 도착) ---
+const NAVER_ROUTE_TYPE = { walk: "walk", bike: "walk", car: "car", taxi: "car" }; // 나머지는 대중교통
+const NAVER_ROUTE_LABEL = { public: "버스·지하철 경로", car: "자동차 경로", walk: "도보 경로" };
+
+function hasCoords(p) {
+  return p && !p.coordMissing && isFinite(p.lat) && isFinite(p.lng) && (p.lat || p.lng);
+}
+
+function naverRouteType(mode, trip) {
+  if (mode && NAVER_ROUTE_TYPE[mode]) return NAVER_ROUTE_TYPE[mode];
+  if (!mode && trip) {
+    if (trip.transport === "car" || trip.transport === "taxi") return "car";
+    if (trip.transport === "walk") return "walk";
+  }
+  return "public";
+}
+
+function naverRouteBtnHtml(from, to, mode) {
+  if (mode === "flight" || mode === "ferry") return "";
+  if (!hasCoords(from) || !hasCoords(to)) return "";
+  if (!isInKorea(from.lat, from.lng) || !isInKorea(to.lat, to.lng)) return "";
+  const type = naverRouteType(mode, state.activeTrip);
+  return `<button class="move-route" data-action="naviroute" data-from="${esc(from.id)}" data-id="${esc(to.id)}">${window.icon("navigate", 14)}${NAVER_ROUTE_LABEL[type]}</button>`;
+}
+
+function isTouchDevice() {
+  const ua = navigator.userAgent || "";
+  return /iPhone|iPad|iPod|Android/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+function naverRouteUrl(from, to, type) {
+  const n = v => encodeURIComponent(String(v || "").slice(0, 40));
+  const app = encodeURIComponent(location.origin + location.pathname);
+  return `nmap://route/${type}?slat=${from.lat}&slng=${from.lng}&sname=${n(from.name)}&dlat=${to.lat}&dlng=${to.lng}&dname=${n(to.name)}&appname=${app}`;
+}
+
+function openNaverRoute(from, to) {
+  const type = naverRouteType(to.move && to.move.mode, state.activeTrip);
+  const kakaoTo = getPlaceLinks(to).routeUrl;
+  if (!isTouchDevice()) {
+    window.open(kakaoTo, "_blank", "noopener");
+    showToast("네이버 지도 앱 길찾기는 아이폰·아이패드에서 열려요. 여기서는 카카오맵으로 열었어요.", 4500);
+    return;
+  }
+  let left = false;
+  const onHide = () => { if (document.hidden) left = true; };
+  document.addEventListener("visibilitychange", onHide);
+  window.addEventListener("pagehide", onHide);
+  location.href = naverRouteUrl(from, to, type);
+  setTimeout(() => {
+    document.removeEventListener("visibilitychange", onHide);
+    window.removeEventListener("pagehide", onHide);
+    if (left || document.hidden) return;
+    showToast("네이버 지도 앱이 열리지 않았어요. 앱이 설치돼 있는지 확인해 주세요.", 7000, {
+      label: "카카오맵으로",
+      onClick: () => window.open(kakaoTo, "_blank", "noopener")
+    });
+  }, 2000);
 }
 
 async function deleteActiveDay() {
@@ -2804,9 +2869,9 @@ function renderTimeline() {
       `;
     }
 
-    if (index > 0 && place.move) {
+    if (index > 0) {
       const conn = document.createElement("div");
-      conn.innerHTML = moveConnectorHtml(place.move);
+      conn.innerHTML = moveConnectorHtml(place.move, dayPlaces[index - 1], place);
       if (conn.firstElementChild) container.appendChild(conn.firstElementChild);
     }
     container.appendChild(card);
