@@ -1,6 +1,6 @@
 // Routy service worker: 앱 파일은 네트워크 우선(최신 유지) + 오프라인 시 캐시,
 // 지도 타일·폰트·Leaflet 등 외부 정적 리소스는 캐시 우선. AI/장소검색 API는 캐시하지 않음.
-const VERSION = "routy-v9-1";
+const VERSION = "routy-v10-1";
 const APP_SHELL = ["./", "index.html", "styles.css", "layout.css", "icons.js", "ui.js", "app.js", "ai.js", "templates.js", "manifest.json", "icon.svg", "icon-192.png"];
 
 // 지도 라이브러리도 설치 시점에 미리 받아 둠 (첫 실행 직후 오프라인 대비)

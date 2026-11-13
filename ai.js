@@ -77,12 +77,17 @@
       "description": "무엇을 하는지·팁을 한 문장으로 짧게 (한국어)",
       "price": 15000,
       "priceUnit": "person 또는 group",
-      "move": { "mode": "walk | bus | subway | train | car | taxi | bike | ferry | flight 중 하나", "minutes": 15, "cost": 1500, "note": "직전 장소에서 여기까지 가는 방법 (예: 2호선 강남역→홍대입구역)" }
+      "move": { "mode": "walk | bus | subway | train | car | taxi | bike | ferry | flight 중 하나", "minutes": 15, "cost": 1500, "note": "직전 장소에서 여기까지 가는 방법 (예: 2호선 강남역→홍대입구역)" },
+      "alternatives": [
+        { "name": "식당 후보 이름", "searchName": "현지어/영어 이름", "lat": 35.0, "lng": 135.0, "description": "대표 메뉴·특징 한 문장", "price": 12000 }
+      ]
     }
   ],
   "tips": ["이 여행에 맞는 준비물/주의사항 3~6개 (짧게)"]
 }
 규칙:
+- 식사(category "restaurant")는 "○○ 먹자골목", "○○ 식당가", "시장 음식 거리"처럼 지역으로 뭉뚱그리지 말고 반드시 실제 개별 식당 하나를 정하세요.
+- 각 식사 장소에는 alternatives로 같은 동네(도보·짧은 이동 거리)의 다른 실제 식당 2곳을 추가로 주세요. 평판 좋고 리뷰 많은 유명한 곳을 우선하되 메뉴 종류나 가격대가 겹치지 않게. 식사가 아닌 장소에는 alternatives를 넣지 마세요.
 - 실제로 존재하는 장소만 사용하고, lat/lng는 그 장소의 실제 좌표(소수점 4자리 이상)로 적으세요.
 - price는 원화(KRW) 정수. 입장료·식사처럼 사람마다 내는 비용은 priceUnit "person"(1인 기준),
   숙소(1박 객실 요금)·택시·렌터카처럼 일행이 함께 내는 비용은 priceUnit "group"(일행 전체 금액). 무료면 0.
@@ -341,6 +346,49 @@
     }
   }
 
+  // 식당 후보: 이름·좌표가 있는 것만, 최대 3곳
+  function normalizeAlternatives(list) {
+    if (!Array.isArray(list)) return undefined;
+    const out = list
+      .filter(a => a && a.name)
+      .map(a => {
+        const lat = parseFloat(a.lat), lng = parseFloat(a.lng);
+        const price = parseInt(a.price, 10);
+        const ok = isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+        return {
+          name: String(a.name).trim(),
+          searchName: a.searchName ? String(a.searchName).trim() : "",
+          lat: ok ? lat : null,
+          lng: ok ? lng : null,
+          description: a.description ? String(a.description).trim() : "",
+          price: isFinite(price) && price >= 0 ? price : undefined
+        };
+      })
+      .filter(a => a.lat !== null)
+      .slice(0, 5);
+    return out.length ? out : undefined;
+  }
+
+  // 특정 식사 자리에 대한 식당 후보 추천 (기존 일정용)
+  async function suggestRestaurants(trip, place, opts = {}) {
+    const dayPlaces = trip.places.filter(p => p.day === place.day).map(p => `${p.time} ${p.name}`).join(" / ");
+    const prompt = [
+      "당신은 한국인 여행자를 위한 맛집 큐레이터입니다.",
+      `여행지: ${trip.destination}, 인원: ${trip.people || 1}명, 소비 성향: ${BUDGET_LABELS[trip.budget] || "보통"}`,
+      `그날 일정: ${dayPlaces}`,
+      `대상 식사: ${place.time} "${place.name}" (위치 lat ${place.lat}, lng ${place.lng})`,
+      "이 식사 시간에 이 위치에서 도보·짧은 이동으로 갈 수 있는 실제 개별 식당 5곳을 추천하세요.",
+      "현지에서 평판이 좋고 리뷰가 많은 유명한 곳을 우선하고, 인기 높은 순서대로 정렬하세요. 별점·리뷰 수 숫자는 쓰지 마세요.",
+      `"${place.name}" 자체와 지역명(○○거리, 먹자골목)은 제외하고, 메뉴 종류나 가격대가 너무 겹치지 않게.`,
+      '반드시 JSON 하나만 출력: {"alternatives":[{"name":"한국어 이름","searchName":"현지어/영어 이름","lat":0,"lng":0,"description":"대표 메뉴·특징 한 문장","price":12000}]}',
+      "price는 1인 기준 원화 정수, lat/lng는 실제 좌표(소수점 4자리 이상)."
+    ].join("\n");
+    const raw = await callGemini(prompt, opts);
+    const list = normalizeAlternatives(raw.alternatives || raw);
+    if (!list) throw new Error("식당 후보를 찾지 못했어요. 잠시 후 다시 시도해 주세요.");
+    return list;
+  }
+
   function normalizeMove(m) {
     if (!m || typeof m !== "object") return undefined;
     const mode = MOVE_MODES.includes(m.mode) ? m.mode : null;
@@ -382,7 +430,8 @@
           description: String(p.description || "").trim(),
           price: isFinite(price) && price >= 0 ? price : undefined,
           priceUnit: p.priceUnit === "group" ? "group" : p.priceUnit === "person" ? "person" : (p.category === "hotel" ? "group" : "person"),
-          move: normalizeMove(p.move)
+          move: normalizeMove(p.move),
+          alternatives: ["restaurant", "cafe"].includes(p.category) ? normalizeAlternatives(p.alternatives) : undefined
         };
       });
     if (out.length === 0) throw new Error("AI가 장소를 하나도 만들지 못했습니다. 조건을 바꿔 다시 시도해 주세요.");
@@ -458,7 +507,8 @@
   async function encodeTrip(trip) {
     const slim = {
       t: trip.title, d: trip.destination, n: trip.days, b: trip.budget, s: trip.startDate || "", c: trip.people || 1, m: trip.transport || "auto", bp: trip.budgetPlan || 0,
-      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0, p.move ? [p.move.mode, p.move.minutes || 0, p.move.note || "", p.move.cost === undefined ? -1 : p.move.cost] : 0])
+      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0, p.move ? [p.move.mode, p.move.minutes || 0, p.move.note || "", p.move.cost === undefined ? -1 : p.move.cost] : 0,
+        p.alternatives ? p.alternatives.map(a => [a.name, +(+a.lat).toFixed(5), +(+a.lng).toFixed(5), a.description || "", a.price || 0, a.searchName || ""]) : 0])
     };
     const bytes = new TextEncoder().encode(JSON.stringify(slim));
     if (typeof CompressionStream !== "undefined") {
@@ -479,6 +529,7 @@
       places: o.p.map((a, i) => ({
         day: a[0], time: a[1], name: a[2], category: CATEGORIES.includes(a[3]) ? a[3] : "sightseeing",
         lat: a[4], lng: a[5], description: a[6], price: a[7], priceUnit: a[8] ? "group" : (a[8] === 0 ? "person" : undefined),
+        alternatives: Array.isArray(a[10]) ? normalizeAlternatives(a[10].map(x => ({ name: x[0], lat: x[1], lng: x[2], description: x[3], price: x[4], searchName: x[5] }))) : undefined,
         move: Array.isArray(a[9]) ? normalizeMove({ mode: a[9][0], minutes: a[9][1], note: a[9][2], cost: a[9][3] >= 0 ? a[9][3] : undefined }) : undefined,
         id: `sh-${stamp}-${i}`
       }))
@@ -489,6 +540,6 @@
     DEFAULT_MODEL,
     getSettings, saveSettings, hasApiKey,
     generateTrip, refineTrip, testApiKey,
-    searchPlaces, encodeTrip, decodeTrip, normalizeTime, normalizeMove, MOVE_MODES
+    searchPlaces, encodeTrip, decodeTrip, normalizeTime, normalizeMove, MOVE_MODES, suggestRestaurants
   };
 })();
