@@ -1642,6 +1642,13 @@ function setupPlaceActionDelegation() {
       deletePlaceById(id);
     }
     else if (action === "delay") askDelay(id);
+    else if (action === "alts") toggleAlternatives(id);
+    else if (action === "suggest") suggestAlternatives(id, btn);
+    else if (action === "pick") pickAlternative(id, parseInt(btn.getAttribute("data-alt"), 10));
+    else if (action === "altmap") {
+      const alt = (place.alternatives || [])[parseInt(btn.getAttribute("data-alt"), 10)];
+      if (alt) window.open(getPlaceLinks(Object.assign({ category: "restaurant" }, alt)).mapUrl, "_blank", "noopener");
+    }
   });
 }
 
@@ -1991,6 +1998,103 @@ async function askDelay(placeId) {
   withUndo(`"${place.name}"부터 오늘 일정을 ${min}분 미뤘어요.`, () => shiftDayFrom(placeId, min));
 }
 
+// --- 식당 후보 ---
+const expandedAlts = new Set();
+
+function altChipHtml(place) {
+  const id = esc(place.id);
+  if (place.alternatives && place.alternatives.length) {
+    const open = expandedAlts.has(place.id);
+    return `<button class="chip-btn chip-alt ${open ? "on" : ""}" data-action="alts" data-id="${id}">${window.icon("list", 16)}${open ? "후보 접기" : `다른 후보 ${place.alternatives.length}곳`}</button>`;
+  }
+  if (place.category === "restaurant" && window.RoutyAI.hasApiKey()) {
+    return `<button class="chip-btn chip-alt" data-action="suggest" data-id="${id}">${window.icon("sparkles", 16)}후보 추천받기</button>`;
+  }
+  return "";
+}
+
+function altListHtml(place) {
+  const id = esc(place.id);
+  const trip = state.activeTrip;
+  return `
+    <div class="alt-list">
+      ${(place.alternatives || []).map((a, i) => `
+        <div class="alt-item">
+          <div class="alt-body">
+            <strong>${esc(a.name)}</strong>
+            ${a.description ? `<span>${esc(a.description)}</span>` : ""}
+            ${a.price ? `<em>${placePriceLabel({ price: a.price, priceUnit: "person" }, trip)}</em>` : ""}
+          </div>
+          <div class="alt-actions">
+            <button class="chip-btn chip-icon" data-action="altmap" data-alt="${i}" data-id="${id}" aria-label="지도">${window.icon("map", 16)}</button>
+            <button class="chip-btn chip-primary" data-action="pick" data-alt="${i}" data-id="${id}">이걸로</button>
+          </div>
+        </div>`).join("")}
+    </div>`;
+}
+
+function toggleAlternatives(placeId) {
+  if (expandedAlts.has(placeId)) expandedAlts.delete(placeId);
+  else expandedAlts.add(placeId);
+  renderTimeline();
+}
+
+// 후보와 현재 식당을 맞바꿈 (현재 식당은 후보 목록으로)
+function pickAlternative(placeId, i) {
+  const place = state.activeTrip.places.find(p => p.id === placeId);
+  const alt = place && place.alternatives && place.alternatives[i];
+  if (!alt) return;
+  if (window.closeSeniorDetailModal) window.closeSeniorDetailModal();
+  withUndo(`"${alt.name}"(으)로 바꿨어요. 원래 식당은 후보에 남아 있어요.`, () => {
+    const current = {
+      name: place.name,
+      searchName: place.searchName || "",
+      lat: place.lat,
+      lng: place.lng,
+      description: place.description || "",
+      price: place.price
+    };
+    place.name = alt.name;
+    place.searchName = alt.searchName || "";
+    place.lat = alt.lat;
+    place.lng = alt.lng;
+    place.description = alt.description || "";
+    if (alt.price !== undefined) place.price = alt.price;
+    place.priceUnit = "person";
+    place.coordMissing = false;
+    place.coordFixed = false;
+    place.coordChecked = false;
+    place.alternatives[i] = current;
+  });
+  if (state.activeTrip.source === "ai") verifyCoordinates(state.activeTrip.id, [placeId]);
+}
+
+async function suggestAlternatives(placeId, btn) {
+  const trip = state.activeTrip;
+  const place = trip.places.find(p => p.id === placeId);
+  if (!place) return;
+  if (!window.RoutyAI.hasApiKey()) {
+    showToast("식당 추천은 설정에서 Gemini API 키를 등록해야 쓸 수 있어요.");
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "찾는 중…";
+  try {
+    const list = await window.RoutyAI.suggestRestaurants(trip, place);
+    // 응답을 기다리는 사이 다른 일정으로 바뀌었으면 무시
+    if (state.activeTrip !== trip) return;
+    place.alternatives = list;
+    expandedAlts.add(placeId);
+    renderTimeline();
+    persistActiveTrip();
+    showToast(`근처 인기 식당 ${list.length}곳을 찾았어요. '이걸로'로 바꿀 수 있어요.`);
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = `${window.icon("sparkles", 16)}후보 추천받기`;
+    showToast(e.message || "식당 후보를 찾지 못했어요.", 4000);
+  }
+}
+
 // AI가 바꾼 장소 표시용
 let recentlyChanged = new Set();
 let refineScope = "day";
@@ -2166,6 +2270,7 @@ function showItineraryView() {
   }
   // 이전 일정의 되돌리기 상태 초기화
   refineUndoTrip = null;
+  expandedAlts.clear();
   recentlyChanged = new Set();
   setRefineMode("normal");
   if (state.activeTripDay > state.activeTrip.days) state.activeTripDay = 1;
@@ -2499,6 +2604,7 @@ function renderTimeline() {
       const controlsHtml = `
         <button class="btn-ctrl btn-senior-link" data-action="map" data-id="${id}">지도에서 보기</button>
         ${isTransit ? "" : `<button class="btn-ctrl btn-senior-link" data-action="search" data-id="${id}">${searchLabel} 검색</button>`}
+        ${(place.alternatives || []).map((a, i) => `<button class="btn-ctrl btn-senior-link" data-action="pick" data-alt="${i}" data-id="${id}">다른 식당: ${esc(a.name)}(으)로 바꾸기</button>`).join("")}
         <button class="btn-ctrl btn-senior-edit" data-action="edit" data-id="${id}">편집하기</button>
         <button class="btn-ctrl btn-delete" data-action="delete" data-id="${id}">장소 삭제하기</button>
       `;
@@ -2533,12 +2639,14 @@ function renderTimeline() {
           <button class="chip-btn chip-primary" data-action="map" data-id="${id}">${window.icon("map", 16)}지도</button>
           ${isTransit ? "" : `<button class="chip-btn" data-action="search" data-id="${id}">${window.icon("search", 16)}${searchLabel}</button>`}
           <button class="chip-btn" data-action="edit" data-id="${id}">${window.icon("pencil", 16)}편집</button>
+          ${altChipHtml(place)}
           <span class="edit-only-actions">
             <button class="chip-btn chip-icon" data-action="up" data-id="${id}" ${index === 0 ? "disabled" : ""} aria-label="위로">${window.icon("up", 18)}</button>
             <button class="chip-btn chip-icon" data-action="down" data-id="${id}" ${index === dayPlaces.length - 1 ? "disabled" : ""} aria-label="아래로">${window.icon("down", 18)}</button>
             <button class="chip-btn chip-icon chip-danger" data-action="delete" data-id="${id}" aria-label="삭제">${window.icon("trash", 18)}</button>
           </span>
         </div>
+        ${expandedAlts.has(place.id) ? altListHtml(place) : ""}
       `;
     }
 
