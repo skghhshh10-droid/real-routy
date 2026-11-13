@@ -509,8 +509,8 @@ function saveToLocalStorage() {
 
 // --- 공통 헬퍼 ---
 const TRANSPORT_LABELS = { auto: "알아서", transit: "대중교통", car: "자가용·렌터카", taxi: "택시", walk: "도보 위주" };
-const MOVE_LABELS = { walk: "도보", bus: "버스", subway: "지하철", train: "기차", car: "자가용", taxi: "택시", bike: "자전거", ferry: "배", flight: "비행기" };
-const MOVE_ICONS = { walk: "walk", bus: "bus", subway: "train", train: "train", car: "car", taxi: "taxi", bike: "bike", ferry: "ferry", flight: "flight" };
+const MOVE_LABELS = { walk: "도보", bus: "버스", express: "고속·시외버스", subway: "지하철", train: "기차", car: "자가용", taxi: "택시", bike: "자전거", ferry: "배", flight: "비행기" };
+const MOVE_ICONS = { walk: "walk", bus: "bus", express: "bus", subway: "train", train: "train", car: "car", taxi: "taxi", bike: "bike", ferry: "ferry", flight: "flight" };
 const CATEGORY_LABELS = { sightseeing: "관광", restaurant: "맛집", cafe: "카페", shopping: "쇼핑", hotel: "숙소", transit: "이동" };
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -1504,6 +1504,12 @@ function setupPlaceEditModal() {
         cost: isFinite(moveCost) && moveCost >= 0 ? moveCost : undefined,
         note: place.move && place.move.mode === moveMode ? place.move.note : ""
       };
+      if (place.move && before.places) {
+        const old = before.places.find(p => p.id === place.id);
+        if (old && old.move && old.move.mode === moveMode) {
+          ["from", "to", "service"].forEach(k => { if (old.move[k]) place.move[k] = old.move[k]; });
+        }
+      }
     } else {
       delete place.move;
     }
@@ -1650,6 +1656,7 @@ function setupPlaceActionDelegation() {
     else if (action === "alts") toggleAlternatives(id);
     else if (action === "suggest") suggestAlternatives(id, btn);
     else if (action === "pick") pickAlternative(id, parseInt(btn.getAttribute("data-alt"), 10));
+    else if (action === "ticket") openTicketSite(place);
     else if (action === "naviroute") {
       const from = state.activeTrip.places.find(p => p.id === btn.getAttribute("data-from"));
       if (from) openNaverRoute(from, place);
@@ -1982,9 +1989,55 @@ async function changeTripTransport(value) {
 function moveConnectorHtml(move, from, to) {
   const routeBtn = from && to ? naverRouteBtnHtml(from, to, move && move.mode) : "";
   if (!move || !move.mode) return routeBtn ? `<div class="move-connector">${routeBtn}</div>` : "";
-  const label = MOVE_LABELS[move.mode] || "이동";
-  const mins = (move.minutes ? ` ${move.minutes}분` : "") + (move.cost ? ` · ${formatWon(move.cost)}${GROUP_MOVE_MODES.includes(move.mode) ? "" : "/인"}` : "");
-  return `<div class="move-connector">${window.icon(MOVE_ICONS[move.mode] || "walk", 15)}<span class="move-main">${label}${mins}</span>${move.note ? `<span class="move-note">${esc(move.note)}</span>` : ""}${routeBtn}</div>`;
+  const ticket = ticketInfo(move, from, to);
+  const label = ticket && move.service ? move.service : (MOVE_LABELS[move.mode] || "이동");
+  const costTxt = move.cost ? ` · ${ticket ? "약 " : ""}${formatWon(move.cost)}${GROUP_MOVE_MODES.includes(move.mode) ? "" : "/인"}${ticket ? " (예상)" : ""}` : "";
+  const mins = (move.minutes ? ` ${formatMinutes(move.minutes)}` : "") + costTxt;
+  const leg = ticket && (move.from || move.to) ? `<span class="move-leg">${esc(move.from || "출발")} → ${esc(move.to || "도착")}</span>` : "";
+  const note = move.note && !leg ? `<span class="move-note">${esc(move.note)}</span>` : "";
+  const ticketBtn = ticket ? `<button class="move-ticket" data-action="ticket" data-id="${esc(to.id)}">${window.icon("ticket", 14)}${ticket.label} 예매</button>` : "";
+  return `<div class="move-connector">${window.icon(MOVE_ICONS[move.mode] || "walk", 15)}<span class="move-main">${esc(label)}${mins}</span>${leg}${note}${ticketBtn}${ticket ? "" : routeBtn}</div>`;
+}
+
+function formatMinutes(m) {
+  if (m < 60) return `${m}분`;
+  return `${Math.floor(m / 60)}시간${m % 60 ? ` ${m % 60}분` : ""}`;
+}
+
+// --- 기차·고속버스 예매 연결 (국내) ---
+const TICKET_SITES = {
+  korail: { label: "코레일", url: "https://www.letskorail.com/" },
+  srt: { label: "SRT", url: "https://etk.srail.kr/" },
+  kobus: { label: "고속버스", url: "https://www.kobus.co.kr/" },
+  bustago: { label: "시외버스", url: "https://www.bustago.or.kr/" }
+};
+
+function ticketInfo(move, from, to) {
+  if (!move || (move.mode !== "train" && move.mode !== "express")) return null;
+  // 해외 구간은 연결할 국내 예매처가 없음
+  const pts = [from, to].filter(hasCoords);
+  if (pts.length && !pts.every(p => isInKorea(p.lat, p.lng))) return null;
+  const text = `${move.service || ""} ${move.note || ""} ${move.from || ""}`;
+  if (move.mode === "train") {
+    return /SRT|수서|동탄|평택지제/i.test(text) ? TICKET_SITES.srt : TICKET_SITES.korail;
+  }
+  return /시외/.test(text) ? TICKET_SITES.bustago : TICKET_SITES.kobus;
+}
+
+async function openTicketSite(place) {
+  const prevIdx = state.activeTrip.places.filter(p => p.day === place.day).indexOf(place) - 1;
+  const from = prevIdx >= 0 ? state.activeTrip.places.filter(p => p.day === place.day)[prevIdx] : null;
+  const site = ticketInfo(place.move, from, place);
+  if (!site) return;
+  const m = place.move;
+  const date = getTripDate(state.activeTrip, place.day);
+  const dateTxt = date ? `${date.getMonth() + 1}월 ${date.getDate()}일 ` : "";
+  const leg = m.from || m.to ? `${m.from || "?"} → ${m.to || "?"}` : "";
+  const msg = `${site.label} 사이트에서 ${dateTxt}${leg}${m.service ? ` ${m.service}` : ""}을(를) 골라 예매하세요.`.replace(/\s+/g, " ");
+  // 예매 사이트에 값을 미리 채울 방법이 없어, 고를 내용을 안내하고 복사해 둔다
+  try { if (leg && navigator.clipboard) await navigator.clipboard.writeText(`${dateTxt}${leg}`.trim()); } catch (e) {}
+  window.open(site.url, "_blank", "noopener");
+  showToast(msg, 6000);
 }
 
 // --- 국내 이동: 네이버 지도 앱 길찾기 (실제 버스 번호·정류장·실시간 도착) ---

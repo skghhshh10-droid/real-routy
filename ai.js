@@ -11,7 +11,7 @@
   const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
   const CATEGORIES = ["sightseeing", "restaurant", "cafe", "shopping", "hotel", "transit"];
   // 장소 사이 이동 수단
-  const MOVE_MODES = ["walk", "bus", "subway", "train", "car", "taxi", "bike", "ferry", "flight"];
+  const MOVE_MODES = ["walk", "bus", "express", "subway", "train", "car", "taxi", "bike", "ferry", "flight"];
   // 여행 전체 이동 방식
   const TRANSPORT_PROMPT = {
     auto: "이동 수단은 상황에 맞게 가장 효율적인 것으로 섞어서 (도보·대중교통·택시 등)",
@@ -83,7 +83,7 @@
       "description": "무엇을 하는지·팁을 한 문장으로 짧게 (한국어)",
       "price": 15000,
       "priceUnit": "person 또는 group",
-      "move": { "mode": "walk | bus | subway | train | car | taxi | bike | ferry | flight 중 하나", "minutes": 15, "cost": 1500, "note": "직전 장소에서 여기까지 가는 방법 (예: 2호선 강남역→홍대입구역)" },
+      "move": { "mode": "walk | bus | express | subway | train | car | taxi | bike | ferry | flight 중 하나", "minutes": 15, "cost": 1500, "note": "직전 장소에서 여기까지 가는 방법 (예: 2호선 강남역→홍대입구역)", "from": "기차·고속버스일 때만: 출발역/터미널 (예: 서울역)", "to": "기차·고속버스일 때만: 도착역/터미널 (예: 부산역)", "service": "기차·고속버스일 때만: KTX | SRT | ITX-새마을 | 무궁화 | 고속버스 | 시외버스 등" },
       "alternatives": [
         { "name": "식당 후보 이름", "searchName": "현지어/영어 이름", "lat": 35.0, "lng": 135.0, "description": "대표 메뉴·특징 한 문장", "price": 12000 }
       ]
@@ -102,6 +102,7 @@
 - 숙박이 있는 날(마지막 날 제외)은 그날 마지막에 숙소(category "hotel")를 넣으세요.
 - 장거리 이동(공항, 기차 등)은 category "transit"으로 넣으세요.
 - move는 "직전 장소에서 이 장소까지" 이동 방법입니다. 각 날의 첫 장소는 move를 생략하세요. minutes는 예상 소요 시간(분).
+- 도시 간 장거리 버스는 bus가 아니라 express(고속·시외버스)로 쓰세요. train·express는 from/to에 실제 역·터미널 정식 이름, service에 열차·버스 종류를 꼭 넣고, cost는 일반실·일반고속 기준 1인 정가를 추정해 넣으세요. 수서·동탄 출발 고속철은 SRT, 서울·용산역 출발은 KTX입니다.
 - move.cost는 이동 요금(원, 정수). 택시·자가용(유류비·통행료·주차비)·렌터카는 일행 전체 금액, 버스·지하철·기차·배·비행기는 1인 요금, 도보·자전거는 0.`;
 
   // 항목별 예산(원, 일행 전체·여행 전체 기간) → 프롬프트 문장
@@ -484,7 +485,10 @@
       mode: mode || "walk",
       minutes: isFinite(minutes) && minutes >= 0 ? minutes : undefined,
       cost: isFinite(cost) && cost >= 0 ? cost : undefined,
-      note: m.note ? String(m.note).trim().slice(0, 80) : ""
+      note: m.note ? String(m.note).trim().slice(0, 80) : "",
+      from: m.from ? String(m.from).trim().slice(0, 30) : undefined,
+      to: m.to ? String(m.to).trim().slice(0, 30) : undefined,
+      service: m.service ? String(m.service).trim().slice(0, 20) : undefined
     };
   }
 
@@ -592,7 +596,7 @@
   async function encodeTrip(trip) {
     const slim = {
       t: trip.title, d: trip.destination, n: trip.days, b: trip.budget, s: trip.startDate || "", c: trip.people || 1, m: trip.transport || "auto", bp: trip.budgetPlan || 0,
-      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0, p.move ? [p.move.mode, p.move.minutes || 0, p.move.note || "", p.move.cost === undefined ? -1 : p.move.cost] : 0,
+      p: trip.places.map(p => [p.day, p.time, p.name, p.category, +(+p.lat).toFixed(5), +(+p.lng).toFixed(5), p.description || "", p.price || 0, p.priceUnit === "group" ? 1 : 0, p.move ? [p.move.mode, p.move.minutes || 0, p.move.note || "", p.move.cost === undefined ? -1 : p.move.cost].concat(p.move.from || p.move.to || p.move.service ? [p.move.from || "", p.move.to || "", p.move.service || ""] : []) : 0,
         p.alternatives ? p.alternatives.map(a => [a.name, +(+a.lat).toFixed(5), +(+a.lng).toFixed(5), a.description || "", a.price || 0, a.searchName || ""]) : 0])
     };
     const bytes = new TextEncoder().encode(JSON.stringify(slim));
@@ -615,7 +619,7 @@
         day: a[0], time: a[1], name: a[2], category: CATEGORIES.includes(a[3]) ? a[3] : "sightseeing",
         lat: a[4], lng: a[5], description: a[6], price: a[7], priceUnit: a[8] ? "group" : (a[8] === 0 ? "person" : undefined),
         alternatives: Array.isArray(a[10]) ? normalizeAlternatives(a[10].map(x => ({ name: x[0], lat: x[1], lng: x[2], description: x[3], price: x[4], searchName: x[5] }))) : undefined,
-        move: Array.isArray(a[9]) ? normalizeMove({ mode: a[9][0], minutes: a[9][1], note: a[9][2], cost: a[9][3] >= 0 ? a[9][3] : undefined }) : undefined,
+        move: Array.isArray(a[9]) ? normalizeMove({ mode: a[9][0], minutes: a[9][1], note: a[9][2], cost: a[9][3] >= 0 ? a[9][3] : undefined, from: a[9][4], to: a[9][5], service: a[9][6] }) : undefined,
         id: `sh-${stamp}-${i}`
       }))
     };
